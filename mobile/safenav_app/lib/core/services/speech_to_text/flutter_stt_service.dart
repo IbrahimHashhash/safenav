@@ -5,15 +5,10 @@ import 'stt_service.dart';
 class FlutterSttService implements SttService {
   final SpeechToText _speech;
 
-  /// True while a user-initiated session is active. Used to distinguish
-  /// "engine stopped because we asked" from "engine stopped on its own."
   bool _sessionActive = false;
 
-  /// Set once per session when the engine signals end-of-session, so the
-  /// `done` and `notListening` status events don't both fire onTimeout.
   bool _stopFired = false;
 
-  /// Live callbacks for the current session. Rewired on every startListening.
   Function()? _onTimeout;
   Function(String)? _onError;
 
@@ -32,9 +27,6 @@ class FlutterSttService implements SttService {
 
   void _handleStatus(String status) {
     if (!_sessionActive) return;
-    // We only react to 'done'. `notListening` fires *before* the final
-    // result is delivered, so reacting to it would lose the last word or
-    // two. `done` fires once the engine has fully wound the session down.
     if (status != 'done') return;
     if (_stopFired) return;
 
@@ -64,9 +56,6 @@ class FlutterSttService implements SttService {
     try {
       await _listenOnce(onResult);
     } catch (e) {
-      // Plugin rejected the call — most often because internal state is
-      // stale after a previous abort. Re-initialize and try once more
-      // before bubbling up.
       _sessionActive = false;
       final recovered = await _speech.initialize(
         onStatus: _handleStatus,
@@ -92,9 +81,6 @@ class FlutterSttService implements SttService {
       onResult: (result) {
         onResult(result.recognizedWords, result.finalResult);
       },
-      // Tuned for a hold-to-talk UI: a user reading out a destination may
-      // pause to think. When these caps trip, the cubit silently restarts
-      // a new session as long as the press is still active.
       listenOptions: SpeechListenOptions(
         listenFor: const Duration(seconds: 60),
         pauseFor: const Duration(seconds: 8),
@@ -104,8 +90,6 @@ class FlutterSttService implements SttService {
 
   @override
   Future<void> stopListening() async {
-    // Mark inactive *before* calling stop so the status callback can tell
-    // this is a user-initiated stop, not a timeout.
     _sessionActive = false;
     await _speech.stop();
   }

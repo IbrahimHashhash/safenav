@@ -30,11 +30,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_bloc: ^8.1.6
+  flutter_bloc: ^9.1.1
   get_it: ^7.7.0
   injectable: ^2.4.4
+  azure_stt_flutter: ^0.0.9
+  permission_handler: ^11.3.1
 
-  speech_to_text: ^7.0.0
   flutter_tts: ^4.0.2
 
   # The following adds the Cupertino Icons font to your application.

@@ -107,11 +107,16 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
         await ttsService.speak(_lastInstruction);
         break;
 
-      case VoiceCommandType.unknown:
-        const text = 'Sorry, command not recognized';
+      case VoiceCommandType.unknownLocation:
+        const text = 'Sorry, I couldn\'t find that location';
         emit(VoiceSpeaking(text));
         await ttsService.speak(text);
         break;
-    }
-  }
+
+      case VoiceCommandType.unknown:
+        const text = 'Sorry, I didn\'t understand that';
+        emit(VoiceSpeaking(text));
+        await ttsService.speak(text);
+        break;    }
+        }
 }

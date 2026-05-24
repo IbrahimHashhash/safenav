@@ -52,7 +52,6 @@ class IntentParserService {
 
     final words = normalized.split(' ');
 
-    // More specific intents first
     if (_containsIntent(words, _moreInfoTriggers)) {
       return VoiceCommand(type: VoiceCommandType.moreInfo);
     }
@@ -73,8 +72,6 @@ class IntentParserService {
       }
     }
 
-    // Direct destination speech
-    // Example: "library"
     final directLocation = _findBestLocation(normalized);
 
     if (directLocation != null) {
@@ -84,7 +81,7 @@ class IntentParserService {
       );
     }
 
-    return VoiceCommand(type: VoiceCommandType.unknown);
+    return VoiceCommand(type: VoiceCommandType.unknownLocation);
   }
 
   String _normalize(String text) {
@@ -145,7 +142,6 @@ class IntentParserService {
     for (final location in Location.all) {
       final locationName = _normalize(location.name);
 
-      // Exact contains shortcut
       if (locationName.contains(candidate) ||
           candidate.contains(locationName)) {
         return location;
@@ -153,7 +149,6 @@ class IntentParserService {
 
       final locationWords = locationName.split(' ').toSet();
 
-      // Token overlap score
       final intersection =
           candidateWords.intersection(locationWords).length;
 
@@ -161,12 +156,10 @@ class IntentParserService {
 
       final tokenScore = union == 0 ? 0 : intersection / union;
 
-      // Levenshtein similarity
       final editScore = 1 -
           (_levenshtein(candidate, locationName) /
               _max(candidate.length, locationName.length));
 
-      // Combined score
       final finalScore = (tokenScore * 0.6) + (editScore * 0.4);
 
       if (finalScore > bestScore) {
@@ -175,7 +168,6 @@ class IntentParserService {
       }
     }
 
-    // Confidence threshold
     return bestScore >= 0.55 ? bestMatch : null;
   }
 

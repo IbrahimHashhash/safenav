@@ -3,6 +3,7 @@ enum VoiceCommandType {
   moreInfo,
   repeat,
   unknown,
+  unknownLocation
 }
 
 class VoiceCommand {

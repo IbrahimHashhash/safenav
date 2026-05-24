@@ -23,7 +23,10 @@ class FlutterSttService implements SttService {
     await _subscription?.cancel();
 
     _subscription = _azureStt.transcriptionStateStream.listen(
-      (state) => onResult(state.text ?? '', state.isFinal ?? false),
+      (state) => onResult(
+        state.finalizedText.join(' '),
+        state.finalizedText.isNotEmpty && state.intermediateText.isEmpty,
+      ),
       onError: (e) => onError(e.toString()),
       onDone: onTimeout,
     );

@@ -18,6 +18,7 @@ class FlutterTtsService implements TtsService {
 
   @override
   Future<void> speak(String text, {VoidCallback? onComplete}) async {
+    _tts.setCompletionHandler(() {}); 
     await _tts.stop();
     await _applyConfig();
     _tts.setCompletionHandler(() {
@@ -28,6 +29,7 @@ class FlutterTtsService implements TtsService {
 
   @override
   Future<void> stop() async {
+    _tts.setCompletionHandler(() {}); 
     await _tts.stop();
   }
 }

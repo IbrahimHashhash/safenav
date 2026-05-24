@@ -3,12 +3,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/voice_command.dart';
 import '../../domain/services/intent_parser_service.dart';
 import '../../domain/services/location_extractor_service.dart';
+import '../../domain/entities/location.dart';
 
 import '../../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../../core/services/speech_to_text/stt_service.dart';
 import '../../../../core/services/text_to_speech/tts_service.dart';
 import 'voice_assistant_state.dart';
-
 
 class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
   final SttService sttService;
@@ -58,6 +58,11 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     emit(VoiceError(message));
   }
 
+  Future<void> stopSpeaking() async {
+    await ttsService.stop();
+    emit(VoiceIdle());
+  }
+
   Future<void> stopListening() async {
     if (!_isPressActive) return;
 
@@ -94,11 +99,15 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
             : VoiceCommandType.unknownLocation,
         argument: location?.name,
       ));
+    } else if (intent == VoiceCommandType.listLocations) {
+      final category = locationExtractor.extractCategory(trimmed);
+      await _handleCommand(VoiceCommand(
+        type: VoiceCommandType.listLocations,
+        category: category,
+      ));
     } else {
       await _handleCommand(VoiceCommand(type: intent));
     }
-
-    emit(VoiceIdle());
   }
 
   Future<void> _handleCommand(VoiceCommand command) async {
@@ -108,33 +117,70 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
         final text = 'Navigating to $destination';
         _lastInstruction = text;
         emit(VoiceSpeaking(text));
-        await ttsService.speak(text);
+        ttsService.speak(text, onComplete: () => emit(VoiceIdle()));
+        break;
+
+      case VoiceCommandType.listLocations:
+        final text = _buildLocationsList(command.category);
+        _lastInstruction = text;
+        emit(VoiceSpeaking(text));
+        ttsService.speak(text, onComplete: () => emit(VoiceIdle()));
         break;
 
       case VoiceCommandType.moreInfo:
         const text =
-            'Available commands are navigate to destination, repeat, and more info';
+            'Available commands are: navigate to a destination, list faculties, list libraries, list cafeterias, full list, repeat, and more info';
         _lastInstruction = text;
         emit(VoiceSpeaking(text));
-        await ttsService.speak(text);
+        ttsService.speak(text, onComplete: () => emit(VoiceIdle()));
         break;
 
       case VoiceCommandType.repeat:
         emit(VoiceSpeaking(_lastInstruction));
-        await ttsService.speak(_lastInstruction);
+        ttsService.speak(_lastInstruction, onComplete: () => emit(VoiceIdle()));
         break;
 
       case VoiceCommandType.unknownLocation:
         const text = 'Sorry, I couldn\'t find that location';
         emit(VoiceSpeaking(text));
-        await ttsService.speak(text);
+        ttsService.speak(text, onComplete: () => emit(VoiceIdle()));
         break;
 
       case VoiceCommandType.unknown:
         const text = 'Sorry, I didn\'t understand that';
         emit(VoiceSpeaking(text));
-        await ttsService.speak(text);
+        ttsService.speak(text, onComplete: () => emit(VoiceIdle()));
         break;
     }
+  }
+
+  String _buildLocationsList(LocationCategory? category) {
+    if (category != null) {
+      final locations = Location.all
+          .where((l) => l.category == category)
+          .map((l) => l.name)
+          .toList();
+      final categoryName = '${category.name}s';
+      return 'There are ${locations.length} $categoryName: ${locations.join(', ')}';
+    }
+
+    final faculties = Location.all
+        .where((l) => l.category == LocationCategory.faculty)
+        .map((l) => l.name)
+        .toList();
+
+    final libraries = Location.all
+        .where((l) => l.category == LocationCategory.library)
+        .map((l) => l.name)
+        .toList();
+
+    final cafeterias = Location.all
+        .where((l) => l.category == LocationCategory.cafeteria)
+        .map((l) => l.name)
+        .toList();
+
+    return 'There are ${faculties.length} faculties: ${faculties.join(', ')}. '
+        '${libraries.length} libraries: ${libraries.join(', ')}. '
+        '${cafeterias.length} cafeterias: ${cafeterias.join(', ')}.';
   }
 }

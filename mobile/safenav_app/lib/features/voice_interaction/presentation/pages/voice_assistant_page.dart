@@ -36,11 +36,13 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
                 context.read<VoiceAssistantCubit>().stopListening();
               } else if (state is VoiceIdle) {
                 context.read<VoiceAssistantCubit>().startListening();
+              }else if (state is VoiceSpeaking) {
+                context.read<VoiceAssistantCubit>().stopSpeaking();
               }
             },
             child: () {
               if (state is VoiceListening) return const ListeningView();
-              if (state is VoiceSpeaking) return SpeakingView(text: state.text);
+              if (state is VoiceSpeaking) return SpeakingView();
               if (state is VoiceError) return Center(child: Text(state.message));
               return const IdleView();
             }(),

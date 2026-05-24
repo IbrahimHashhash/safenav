@@ -17,6 +17,18 @@ class LocationExtractorService {
     return _findBestLocation(candidates);
   }
 
+  LocationCategory? extractCategory(String text) {
+    final normalized = TextUtils.normalize(text);
+
+    if (normalized.contains('facult')) return LocationCategory.faculty;
+    if (normalized.contains('librar')) return LocationCategory.library;
+    if (normalized.contains('cafeteria') || normalized.contains('cafe')) {
+      return LocationCategory.cafeteria;
+    }
+
+    return null;
+  }
+
   Location? _findBestLocation(String candidate) {
     Location? bestMatch;
     double bestScore = 0;

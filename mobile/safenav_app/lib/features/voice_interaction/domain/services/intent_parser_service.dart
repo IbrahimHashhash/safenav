@@ -15,6 +15,10 @@ class IntentParserService {
       return VoiceCommandType.repeat;
     }
 
+    if (_containsIntent(words, VoiceConstants.listTriggers)) {
+      return VoiceCommandType.listLocations;
+    }
+
     if (_containsIntent(words, VoiceConstants.navigateTriggers)) {
       return VoiceCommandType.navigate;
     }

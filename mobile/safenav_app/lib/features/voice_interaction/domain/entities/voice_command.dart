@@ -1,17 +1,22 @@
+import 'location.dart';
+
 enum VoiceCommandType {
   navigate,
-  moreInfo,
   repeat,
+  moreInfo,
+  listLocations,
   unknown,
-  unknownLocation
+  unknownLocation,
 }
 
 class VoiceCommand {
   final VoiceCommandType type;
   final String? argument;
+  final LocationCategory? category;
 
-  VoiceCommand({
+  const VoiceCommand({
     required this.type,
     this.argument,
+    this.category,
   });
 }

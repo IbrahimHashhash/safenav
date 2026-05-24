@@ -1,10 +1,11 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'tts_config.dart';
 import 'tts_service.dart';
 
 class FlutterTtsService implements TtsService {
   final FlutterTts _tts;
-  final TtsConfig config;  // ← missing this line
+  final TtsConfig config;
 
   FlutterTtsService(this._tts, {this.config = const TtsConfig()});
 
@@ -16,9 +17,12 @@ class FlutterTtsService implements TtsService {
   }
 
   @override
-  Future<void> speak(String text) async {
+  Future<void> speak(String text, {VoidCallback? onComplete}) async {
     await _tts.stop();
-    await _applyConfig();  // ← also wire this in
+    await _applyConfig();
+    _tts.setCompletionHandler(() {
+      onComplete?.call();
+    });
     await _tts.speak(text);
   }
 

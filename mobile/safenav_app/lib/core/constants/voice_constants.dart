@@ -18,4 +18,9 @@ class VoiceConstants {
   static const repeatTriggers = [
     'repeat', 'again',
   ];
+  
+  static const listTriggers = [
+    'list', 'show', 'available', 'what', 'give',
+  ];
+
 }

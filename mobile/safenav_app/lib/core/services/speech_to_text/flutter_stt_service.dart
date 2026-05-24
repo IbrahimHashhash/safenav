@@ -5,6 +5,7 @@ import 'stt_service.dart';
 class FlutterSttService implements SttService {
   final AzureSpeechToText _azureStt;
   StreamSubscription? _subscription;
+  String _lastText = '';
 
   FlutterSttService(this._azureStt);
 
@@ -21,12 +22,18 @@ class FlutterSttService implements SttService {
     required Function(String message) onError,
   }) async {
     await _subscription?.cancel();
+    _lastText = '';
 
     _subscription = _azureStt.transcriptionStateStream.listen(
-      (state) => onResult(
-        state.finalizedText.join(' '),
-        state.finalizedText.isNotEmpty && state.intermediateText.isEmpty,
-      ),
+      (state) {
+        final text = state.text;
+        if (text.isNotEmpty) {
+          _lastText = text;
+          print('[STT] captured: "$text"');
+
+          onResult(text, false); 
+        }
+      },
       onError: (e) => onError(e.toString()),
       onDone: onTimeout,
     );
@@ -39,6 +46,8 @@ class FlutterSttService implements SttService {
     await _subscription?.cancel();
     await _azureStt.stopListening();
   }
+
+  String get lastText => _lastText;
 
   void dispose() => _azureStt.dispose();
 }

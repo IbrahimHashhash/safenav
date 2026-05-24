@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/services/intent_parser/intent_parser_service.dart';
 import '../../../../core/services/intent_parser/voice_command.dart';
+import '../../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../../core/services/speech_to_text/stt_service.dart';
 import '../../../../core/services/text_to_speech/tts_service.dart';
 import 'voice_assistant_state.dart';
@@ -25,7 +26,6 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     await sttService.initialize();
   }
 
-  /// USER PRESSES SCREEN
   Future<void> startListening() async {
     if (_isPressActive || sttService.isListening) return;
 
@@ -35,12 +35,7 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     emit(VoiceListening());
 
     await sttService.startListening(
-      onResult: (text, isFinal) {
-        if (isFinal && _isPressActive && !_hasHandledCommand) {
-          _hasHandledCommand = true;
-          _handleRecognizedText(text);
-        }
-      },
+      onResult: (text, isFinal) {}, // text is read on release via lastText
       onTimeout: _onSttTimeout,
       onError: _onSttError,
     );
@@ -66,8 +61,14 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
 
     if (_hasHandledCommand) return;
 
-    await Future.delayed(const Duration(milliseconds: 300));
-    if (!_hasHandledCommand) emit(VoiceIdle());
+    final text = (sttService as FlutterSttService).lastText;
+
+    if (text.isNotEmpty) {
+      _hasHandledCommand = true;
+      await _handleRecognizedText(text);
+    } else {
+      emit(VoiceIdle());
+    }
   }
 
   Future<void> _handleRecognizedText(String text) async {

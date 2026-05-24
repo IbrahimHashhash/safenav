@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'core/di/injection.dart';
 
 import 'features/voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
@@ -10,7 +10,7 @@ import 'features/voice_interaction/presentation/pages/voice_assistant_page.dart'
 void main() async {
 
   WidgetsFlutterBinding.ensureInitialized();
-
+  await dotenv.load(fileName: '.env');  
   await initDependencies();
 
   runApp(const MyApp());

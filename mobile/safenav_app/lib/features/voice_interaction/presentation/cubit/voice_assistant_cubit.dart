@@ -2,20 +2,25 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/entities/voice_command.dart';
 import '../../domain/services/intent_parser_service.dart';
+import '../../domain/services/location_extractor_service.dart';
+
 import '../../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../../core/services/speech_to_text/stt_service.dart';
 import '../../../../core/services/text_to_speech/tts_service.dart';
 import 'voice_assistant_state.dart';
 
+
 class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
   final SttService sttService;
   final TtsService ttsService;
-  final IntentParserService parser;
+  final IntentParserService intentParser;
+  final LocationExtractorService locationExtractor;
 
   VoiceAssistantCubit({
     required this.sttService,
     required this.ttsService,
-    required this.parser,
+    required this.intentParser,
+    required this.locationExtractor,
   }) : super(VoiceIdle());
 
   String _lastInstruction = '';
@@ -35,7 +40,7 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     emit(VoiceListening());
 
     await sttService.startListening(
-      onResult: (text, isFinal) {}, // text is read on release via lastText
+      onResult: (text, isFinal) {},
       onTimeout: _onSttTimeout,
       onError: _onSttError,
     );
@@ -79,8 +84,20 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
       return;
     }
 
-    final command = parser.parse(trimmed);
-    await _handleCommand(command);
+    final intent = intentParser.detect(trimmed);
+
+    if (intent == VoiceCommandType.navigate) {
+      final location = locationExtractor.extract(trimmed);
+      await _handleCommand(VoiceCommand(
+        type: location != null
+            ? VoiceCommandType.navigate
+            : VoiceCommandType.unknownLocation,
+        argument: location?.name,
+      ));
+    } else {
+      await _handleCommand(VoiceCommand(type: intent));
+    }
+
     emit(VoiceIdle());
   }
 
@@ -117,6 +134,7 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
         const text = 'Sorry, I didn\'t understand that';
         emit(VoiceSpeaking(text));
         await ttsService.speak(text);
-        break;    }
-        }
+        break;
+    }
+  }
 }

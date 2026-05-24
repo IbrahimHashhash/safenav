@@ -31,7 +31,8 @@ class MyApp extends StatelessWidget {
           create: (_) => VoiceAssistantCubit(
             sttService: sl(),
             ttsService: sl(),
-            parser: sl(),
+            intentParser: sl(),
+            locationExtractor: sl(),
           ),
         ),
       ],

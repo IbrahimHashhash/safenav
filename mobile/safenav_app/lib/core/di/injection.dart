@@ -3,7 +3,7 @@ import 'package:get_it/get_it.dart';
 import 'package:azure_stt_flutter/azure_stt_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import '../services/intent_parser/intent_parser_service.dart';
+import '../../features/voice_interaction/domain/services/intent_parser_service.dart';
 import '../services/speech_to_text/flutter_stt_service.dart';
 import '../services/speech_to_text/stt_service.dart';
 import '../services/text_to_speech/flutter_tts_service.dart';

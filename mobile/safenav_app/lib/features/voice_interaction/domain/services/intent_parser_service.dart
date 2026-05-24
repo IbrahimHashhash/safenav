@@ -1,4 +1,4 @@
-import 'voice_command.dart';
+import '../entities/voice_command.dart';
 
 class IntentParserService {
   VoiceCommand parse(String text) {

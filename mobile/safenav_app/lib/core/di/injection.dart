@@ -5,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../../features/voice_interaction/domain/services/intent_parser_service.dart';
 import '../../features/voice_interaction/domain/services/location_extractor_service.dart';
+import '../../features/obstacle_avoidance/data/datasources/obstacle_sse_datasource.dart';
 
 import '../services/speech_to_text/flutter_stt_service.dart';
 import '../services/speech_to_text/stt_service.dart';
@@ -32,9 +33,12 @@ Future<void> initDependencies() async {
     () => FlutterSttService(sl()),
   );
 
+  sl.registerLazySingleton(() => IntentParserService());
+  sl.registerLazySingleton(() => LocationExtractorService());
+
   sl.registerLazySingleton(
-    () => IntentParserService(),
+    () => ObstacleSseDatasource(
+      baseUrl: dotenv.env['OBSTACLE_API_URL'] ?? 'http://10.0.2.2:8000',
+    ),
   );
-  sl.registerLazySingleton(
-    () => LocationExtractorService());
 }

@@ -1,4 +1,4 @@
-import '../../../help_info/domain/entities/location.dart';
+import 'package:safenav_app/shared/models/location.dart';
 
 enum VoiceCommandType {
   navigate,

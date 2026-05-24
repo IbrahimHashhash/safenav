@@ -1,4 +1,4 @@
-import '../../../help_info/domain/entities/location.dart';
+import 'package:safenav_app/shared/models/location.dart';
 import '../../../../core/utils/text_utils.dart';
 import '../../../../core/constants/voice_constants.dart';
 

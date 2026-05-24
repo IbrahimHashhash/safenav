@@ -1,4 +1,4 @@
-import '../../domain/entities/location.dart';
+import '../../../help_info/domain/entities/location.dart';
 import '../../../../core/utils/text_utils.dart';
 import '../../../../core/constants/voice_constants.dart';
 

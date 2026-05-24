@@ -1,4 +1,4 @@
-import 'location.dart';
+import '../../../help_info/domain/entities/location.dart';
 
 enum VoiceCommandType {
   navigate,

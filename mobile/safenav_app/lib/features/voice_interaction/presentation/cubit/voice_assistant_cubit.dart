@@ -3,7 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/voice_command.dart';
 import '../../domain/services/intent_parser_service.dart';
 import '../../domain/services/location_extractor_service.dart';
-import '../../domain/entities/location.dart';
+import '../../../../core/constants/help_info_messages.dart';
+import '../../../help_info/domain/entities/location.dart';
 
 import '../../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../../core/services/speech_to_text/stt_service.dart';
@@ -128,8 +129,7 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
         break;
 
       case VoiceCommandType.moreInfo:
-        const text =
-            'Available commands are: navigate to a destination, list faculties, list libraries, list cafeterias, full list, repeat, and more info';
+        final text = HelpInfoMessages.availableCommands;
         _lastInstruction = text;
         emit(VoiceSpeaking(text));
         ttsService.speak(text, onComplete: () => emit(VoiceIdle()));

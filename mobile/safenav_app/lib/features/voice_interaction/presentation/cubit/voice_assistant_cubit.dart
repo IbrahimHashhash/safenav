@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/services/intent_parser/intent_parser_service.dart';
-import '../../../../core/services/intent_parser/voice_command.dart';
+import '../../domain/entities/voice_command.dart';
+import '../../domain/services/intent_parser_service.dart';
 import '../../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../../core/services/speech_to_text/stt_service.dart';
 import '../../../../core/services/text_to_speech/tts_service.dart';
@@ -62,6 +62,7 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     if (_hasHandledCommand) return;
 
     final text = (sttService as FlutterSttService).lastText;
+    print('[Cubit] processing on release: "$text"');
 
     if (text.isNotEmpty) {
       _hasHandledCommand = true;

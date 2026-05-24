@@ -12,6 +12,8 @@ class FlutterSttService implements SttService {
   @override
   bool get isListening => _azureStt.isListening;
 
+  String get lastText => _lastText;
+
   @override
   Future<bool> initialize() async => true;
 
@@ -30,8 +32,7 @@ class FlutterSttService implements SttService {
         if (text.isNotEmpty) {
           _lastText = text;
           print('[STT] captured: "$text"');
-
-          onResult(text, false); 
+          onResult(text, false);
         }
       },
       onError: (e) => onError(e.toString()),
@@ -43,11 +44,10 @@ class FlutterSttService implements SttService {
 
   @override
   Future<void> stopListening() async {
-    await _subscription?.cancel();
     await _azureStt.stopListening();
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _subscription?.cancel();
   }
-
-  String get lastText => _lastText;
 
   void dispose() => _azureStt.dispose();
 }

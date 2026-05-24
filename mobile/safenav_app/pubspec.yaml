@@ -35,6 +35,8 @@ dependencies:
   injectable: ^2.4.4
   azure_stt_flutter: ^0.0.9
   permission_handler: ^11.3.1
+  flutter_dotenv: ^5.2.1
+
 
   flutter_tts: ^4.0.2
 

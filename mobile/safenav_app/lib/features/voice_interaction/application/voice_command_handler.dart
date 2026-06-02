@@ -32,8 +32,8 @@ class VoiceCommandHandler {
         final message = await navigationService.buildRoute(location);
         return SpeechRequest(message, SpeechPriority.assistant);
       } catch (e) {
-        return SpeechRequest(
-          'Failed to build route: $e',
+        return const SpeechRequest(
+          'Unable to build route. Please check location permissions',
           SpeechPriority.assistant,
         );
       }

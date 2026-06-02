@@ -156,6 +156,7 @@ class VoiceAssistantService {
   }
 
   void dispose() {
+    _navigationService.dispose();
     _cuePlayer.dispose();
   }
 }

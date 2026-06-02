@@ -9,11 +9,14 @@ class NavigationService {
   final Function(String) _onInstruction;
 
   RouteEntity? _currentRoute;
+  Location? _currentDestination;
   int _currentStepIndex = 0;
   bool _isNavigating = false;
+  bool _isReady = false;
   StreamSubscription<Position>? _locationSubscription;
 
-  static const double _proximityThreshold = 30.0; // meters
+  static const double _proximityThreshold = 15.0;
+  static const double _rerouteThreshold = 30.0;
 
   NavigationService({
     required GetRouteUseCase getRoute,
@@ -34,8 +37,10 @@ class NavigationService {
       destLng: destination.longitude,
     );
 
+    _currentDestination = destination;
     _currentStepIndex = 0;
     _isNavigating = false;
+    _isReady = false;
 
     return 'Route to ${destination.name} is ready. Say start navigation to begin';
   }
@@ -46,7 +51,13 @@ class NavigationService {
     }
 
     _isNavigating = true;
+    _isReady = false;
     _startLocationTracking();
+    
+    Future.delayed(const Duration(seconds: 3), () {
+      _isReady = true;
+    });
+    
     return _getCurrentInstruction() ?? 'Navigation started';
   }
 
@@ -54,13 +65,20 @@ class NavigationService {
     _locationSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5, // Update every 5 meters
+        distanceFilter: 3,
       ),
     ).listen(_onLocationUpdate);
   }
 
-  void _onLocationUpdate(Position position) {
+  void _onLocationUpdate(Position position) async {
     if (!_isNavigating || _currentRoute == null) return;
+
+    if (_isOffRoute(position)) {
+      await _reroute(position);
+      return;
+    }
+
+    if (!_isReady) return;
 
     final instructions = _currentRoute!.instructions;
     if (_currentStepIndex >= instructions.length) {
@@ -69,17 +87,19 @@ class NavigationService {
       return;
     }
 
-    final currentStep = instructions[_currentStepIndex];
+    final nextIndex = _currentStepIndex + 1;
+    if (nextIndex >= instructions.length) return;
+
+    final nextStep = instructions[nextIndex];
     final distance = Geolocator.distanceBetween(
       position.latitude,
       position.longitude,
-      currentStep.lat,
-      currentStep.lng,
+      nextStep.lat,
+      nextStep.lng,
     );
 
-    // When user is close to the waypoint, announce next instruction
     if (distance <= _proximityThreshold) {
-      _currentStepIndex++;
+      _currentStepIndex = nextIndex;
       
       if (_currentStepIndex >= instructions.length) {
         _onInstruction('You have arrived at your destination');
@@ -90,6 +110,51 @@ class NavigationService {
           _onInstruction(instruction);
         }
       }
+    }
+  }
+
+  bool _isOffRoute(Position position) {
+    if (_currentRoute == null || _currentRoute!.coordinates.isEmpty) return false;
+
+    for (final coord in _currentRoute!.coordinates) {
+      final distance = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        coord[0],
+        coord[1],
+      );
+      if (distance < _rerouteThreshold) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> _reroute(Position position) async {
+    if (_currentDestination == null) return;
+
+    _onInstruction('Recalculating route');
+
+    try {
+      _currentRoute = await _getRoute(
+        sourceLat: position.latitude,
+        sourceLng: position.longitude,
+        destLat: _currentDestination!.latitude,
+        destLng: _currentDestination!.longitude,
+      );
+      _currentStepIndex = 0;
+      _isReady = false;
+
+      Future.delayed(const Duration(seconds: 3), () {
+        _isReady = true;
+      });
+
+      final instruction = _getCurrentInstruction();
+      if (instruction != null) {
+        _onInstruction(instruction);
+      }
+    } catch (e) {
+      _onInstruction('Failed to recalculate route');
     }
   }
 
@@ -104,9 +169,11 @@ class NavigationService {
 
   String stopNavigation() {
     _isNavigating = false;
+    _isReady = false;
     _locationSubscription?.cancel();
     _locationSubscription = null;
     _currentRoute = null;
+    _currentDestination = null;
     _currentStepIndex = 0;
     return 'Navigation stopped';
   }
@@ -114,19 +181,19 @@ class NavigationService {
   Future<Position> _getCurrentLocation() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      throw Exception('Location services are disabled');
+      throw Exception('Please enable location services');
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        throw Exception('Location permissions are denied');
+        throw Exception('Location permission is required');
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      throw Exception('Location permissions are permanently denied');
+      throw Exception('Please enable location permission in settings');
     }
 
     return await Geolocator.getCurrentPosition();

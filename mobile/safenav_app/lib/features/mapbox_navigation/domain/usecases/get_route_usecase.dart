@@ -1,4 +1,3 @@
-//
 import '../entities/route_entity.dart';
 import '../repositories/route_repository.dart';
 
@@ -7,7 +6,7 @@ class GetRouteUseCase {
 
   GetRouteUseCase(
     this.repository,
-  ); // when you create an object from this class you must give it repository
+  );
 
   Future<RouteEntity> call({
     required double sourceLat,

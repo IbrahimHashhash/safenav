@@ -1,3 +1,4 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/entities/voice_command.dart';
@@ -36,6 +37,8 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     );
   }
 
+  final AudioPlayer _cuePlayer = AudioPlayer();
+
   String _lastInstruction = '';
   bool _isPressActive = false;
   bool _hasHandledCommand = false;
@@ -60,12 +63,13 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     if (text.trim().isEmpty) return;
     await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.navigation));
   }
-
   Future<void> startListening() async {
     if (_isPressActive || sttService.isListening) return;
 
     _isPressActive = true;
     _hasHandledCommand = false;
+    await _cueListeningStarted();
+
     emit(VoiceListening());
 
     await sttService.startListening(
@@ -73,7 +77,6 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
         if (isFinal && _isPressActive && !_hasHandledCommand) {
           _isPressActive = false;
           _hasHandledCommand = true;
-
           sttService.stopListening().then((_) {
             _handleRecognizedText(text);
           });
@@ -82,6 +85,17 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
       onTimeout: _onSttTimeout,
       onError: _onSttError,
     );
+  }
+
+  /// Plays the "mic is listening" cue: a chime asset so the (blind) user knows
+  /// the mic is now live. Failures are swallowed — the cue must never block
+  /// listening.
+  Future<void> _cueListeningStarted() async {
+    try {
+      await _cuePlayer.play(AssetSource('sounds/activation.wav'));
+    } catch (_) {
+      // Ignore: cue is non-essential.
+    }
   }
 
   Future<void> cancelListening() async {
@@ -142,5 +156,11 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
 
     _lastInstruction = request.text;
     await _speechQueue.enqueue(request);
+  }
+
+  @override
+  Future<void> close() {
+    _cuePlayer.dispose();
+    return super.close();
   }
 }

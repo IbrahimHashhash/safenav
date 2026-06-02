@@ -4,16 +4,21 @@ import '../../../../core/constants/voice_constants.dart';
 
 class ExtractLocationUseCase {
   Location? call(String text) {
+    final candidate = extractCandidate(text);
+    if (candidate == null) return null;
+    return _findBestLocation(candidate);
+  }
+
+  String? extractCandidate(String text) {
     final normalized = TextUtils.normalize(text);
     final words = normalized.split(' ');
 
-    final candidates = words
+    final candidate = words
         .where((w) => !_isIgnoredWord(w) && w.length > 1)
         .join(' ');
 
-    if (candidates.isEmpty) return null;
-
-    return _findBestLocation(candidates);
+    if (candidate.isEmpty) return null;
+    return candidate;
   }
 
   LocationCategory? extractCategory(String text) {

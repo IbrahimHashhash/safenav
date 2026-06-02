@@ -17,21 +17,28 @@ class VoiceCommandHandler {
   SpeechRequest handle(String text) {
     final intent = parseIntent(text);
 
-if (intent == VoiceCommandType.navigate) {
-  final location = extractLocation(text);
+    if (intent == VoiceCommandType.navigate) {
+      final location = extractLocation(text);
+      if (location != null) {
+        return SpeechRequest(
+          'Got it. your route to "${location.name} is ready".',
+          SpeechPriority.assistant,
+        );
+      }
 
-  if (location == null) {
-    return const SpeechRequest(
-      'You didn’t specify a location.',
-      SpeechPriority.assistant,
-    );
-  }
+      final candidate = extractLocation.extractCandidate(text);
+      if (candidate == null) {
+        return const SpeechRequest(
+          'You didn’t specify a location.',
+          SpeechPriority.assistant,
+        );
+      }
 
-  return SpeechRequest(
-    'Sorry, I couldn’t find "${location.name}" in the map.',
-    SpeechPriority.assistant,
-  );
-}
+      return SpeechRequest(
+        'Sorry, I couldn’t find "$candidate" in the map.',
+        SpeechPriority.assistant,
+      );
+    }
     if (intent == VoiceCommandType.listLocations) {
       final category = extractLocation.extractCategory(text);
       return SpeechRequest(_buildLocationsList(category), SpeechPriority.assistant);

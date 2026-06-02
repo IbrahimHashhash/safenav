@@ -1,10 +1,9 @@
-import '../../domain/entities/voice_command.dart';
 import '../../../../core/utils/text_utils.dart';
 import '../../../../core/constants/voice_constants.dart';
+import '../entities/voice_command.dart';
 
-
-class IntentParserService {
-  VoiceCommandType detect(String text) {
+class ParseIntentUseCase {
+  VoiceCommandType call(String text) {
     final words = TextUtils.normalize(text).split(' ');
 
     if (_containsIntent(words, VoiceConstants.moreInfoTriggers)) {

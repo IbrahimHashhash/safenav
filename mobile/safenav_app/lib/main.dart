@@ -10,30 +10,16 @@ import 'features/voice_interaction/presentation/pages/voice_assistant_page.dart'
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (error, stackTrace) {
-    debugPrint('Failed to load .env: $error');
-    debugPrint('$stackTrace');
-  }
+  await dotenv.load(fileName: '.env');
   await initDependencies();
 
-  
-  final voiceCubit = VoiceAssistantCubit(
-    sttService: sl(),
-    ttsService: sl(),
-    intentParser: sl(),
-    locationExtractor: sl(),
-  );
+  final voiceCubit = VoiceAssistantCubit(sl());
 
-  
   final obstacleListener = ObstacleListenerService(
     datasource: sl<ObstacleSseDatasource>(),
     voiceCubit: voiceCubit,
   );
-
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));
-  obstacleListener.start();
 }
 
 class MyApp extends StatefulWidget {

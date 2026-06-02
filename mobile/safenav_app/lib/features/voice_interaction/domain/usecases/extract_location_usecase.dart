@@ -2,9 +2,8 @@ import 'package:safenav_app/shared/models/location.dart';
 import '../../../../core/utils/text_utils.dart';
 import '../../../../core/constants/voice_constants.dart';
 
-
-class LocationExtractorService {
-  Location? extract(String text) {
+class ExtractLocationUseCase {
+  Location? call(String text) {
     final normalized = TextUtils.normalize(text);
     final words = normalized.split(' ');
 

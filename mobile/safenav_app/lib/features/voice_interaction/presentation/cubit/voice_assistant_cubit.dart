@@ -1,166 +1,18 @@
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
-import '../../domain/entities/voice_command.dart';
-import '../../domain/services/intent_parser_service.dart';
-import '../../domain/services/location_extractor_service.dart';
-import '../../../../core/services/speech_to_text/flutter_stt_service.dart';
-import '../../../../core/services/speech_to_text/stt_service.dart';
-import '../../../../core/services/text_to_speech/tts_service.dart';
-import '../cubit/speech_queue.dart';
-import '../cubit/voice_command_handler.dart';
+import '../../application/voice_assistant_service.dart';
 import 'voice_assistant_state.dart';
 
 class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
-  final SttService sttService;
-  final TtsService ttsService;
-  final IntentParserService intentParser;
-  final LocationExtractorService locationExtractor;
+  final VoiceAssistantService _service;
 
-  late final SpeechQueue _speechQueue;
-  late final VoiceCommandHandler _commandHandler;
-
-  VoiceAssistantCubit({
-    required this.sttService,
-    required this.ttsService,
-    required this.intentParser,
-    required this.locationExtractor,
-  }) : super(VoiceIdle()) {
-    _speechQueue = SpeechQueue(
-      ttsService: ttsService,
-      onSpeaking: (text) => emit(VoiceSpeaking(text)),
-      onIdle: () => emit(VoiceIdle()),
-    );
-    _commandHandler = VoiceCommandHandler(
-      intentParser: intentParser,
-      locationExtractor: locationExtractor,
-    );
+  VoiceAssistantCubit(this._service) : super(VoiceIdle()) {
+    _service.onStateChange = (state) => emit(state);
   }
 
-  final AudioPlayer _cuePlayer = AudioPlayer();
-
-  String _lastInstruction = '';
-  bool _isPressActive = false;
-  bool _hasHandledCommand = false;
-
-  Future<void> initialize() async {
-    await sttService.initialize();
-  }
-
-  Future<void> speakObstacleInstruction(String text) async {
-    if (text.trim().isEmpty) return;
-
-    if (_isPressActive) {
-      _isPressActive = false;
-      _hasHandledCommand = true;
-      await sttService.stopListening();
-    }
-
-    await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.obstacle));
-  }
-
-  Future<void> speakNavigationInstruction(String text) async {
-    if (text.trim().isEmpty) return;
-    await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.navigation));
-  }
-  Future<void> startListening() async {
-    if (_isPressActive || sttService.isListening) return;
-
-    _isPressActive = true;
-    _hasHandledCommand = false;
-    await _cueListeningStarted();
-
-    emit(VoiceListening());
-
-    await sttService.startListening(
-      onResult: (text, isFinal) {
-        if (isFinal && _isPressActive && !_hasHandledCommand) {
-          _isPressActive = false;
-          _hasHandledCommand = true;
-          sttService.stopListening().then((_) {
-            _handleRecognizedText(text);
-          });
-        }
-      },
-      onTimeout: _onSttTimeout,
-      onError: _onSttError,
-    );
-  }
-
-  /// Plays the "mic is listening" cue: a chime asset so the (blind) user knows
-  /// the mic is now live. Failures are swallowed — the cue must never block
-  /// listening.
-  Future<void> _cueListeningStarted() async {
-    try {
-      await _cuePlayer.play(AssetSource('sounds/activation.wav'));
-    } catch (_) {
-      // Ignore: cue is non-essential.
-    }
-  }
-
-  Future<void> cancelListening() async {
-    if (!_isPressActive) return;
-
-    _isPressActive = false;
-    _hasHandledCommand = true;
-    await sttService.stopListening();
-    emit(VoiceIdle());
-  }
-
-  void _onSttTimeout() {
-    if (!_isPressActive || _hasHandledCommand) return;
-    _isPressActive = false;
-
-    final text = (sttService as FlutterSttService).lastText;
-    if (text.isNotEmpty) {
-      _hasHandledCommand = true;
-      _handleRecognizedText(text);
-    } else {
-      emit(VoiceIdle());
-    }
-  }
-
-  void _onSttError(String message) {
-    if (!_isPressActive) return;
-    _isPressActive = false;
-    emit(VoiceError(message));
-  }
-
-  Future<void> stopSpeaking() async {
-    await _speechQueue.stopAll();
-  }
-
-  Future<void> _handleRecognizedText(String text) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      emit(VoiceIdle());
-      return;
-    }
-
-    if (intentParser.detect(trimmed) == VoiceCommandType.repeat) {
-      if (_lastInstruction.isNotEmpty) {
-        await _speechQueue.enqueue(
-          SpeechRequest(_lastInstruction, SpeechPriority.assistant),
-        );
-      } else {
-        emit(VoiceIdle());
-      }
-      return;
-    }
-
-    final request = _commandHandler.handle(trimmed);
-    if (request.text.isEmpty) {
-      emit(VoiceIdle());
-      return;
-    }
-
-    _lastInstruction = request.text;
-    await _speechQueue.enqueue(request);
-  }
-
-  @override
-  Future<void> close() {
-    _cuePlayer.dispose();
-    return super.close();
-  }
+  Future<void> initialize() => _service.initialize();
+  Future<void> startListening() => _service.startListening();
+  Future<void> cancelListening() => _service.cancelListening();
+  Future<void> stopSpeaking() => _service.stopSpeaking();
+  Future<void> speakObstacleInstruction(String text) => _service.speakObstacleInstruction(text);
+  Future<void> speakNavigationInstruction(String text) => _service.speakNavigationInstruction(text);
 }

@@ -23,4 +23,15 @@ class VoiceConstants {
     'list', 'show', 'available', 'what', 'give',
   ];
 
+  static const startNavigationTriggers = [
+    'start', 'begin', 'commence',
+  ];
+
+  static const stopNavigationTriggers = [
+    'stop', 'cancel', 'end', 'quit', 'halt',
+  ];
+
+  static const nextInstructionTriggers = [
+    'next', 'continue', 'proceed',
+  ];
 }

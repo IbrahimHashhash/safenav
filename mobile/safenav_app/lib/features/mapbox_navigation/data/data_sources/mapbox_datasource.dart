@@ -15,7 +15,7 @@ class MapboxDataSource {
     final url =
         "https://api.mapbox.com/directions/v5/mapbox/walking/"
         "$sourceLng,$sourceLat;$destLng,$destLat"
-        "?geometries=geojson&steps=true&overview=full"
+        "?geometries=geojson&steps=true&overview=full&language=en"
         "&access_token=$token";
 
     print("MAPBOX URL: $url");

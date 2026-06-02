@@ -7,6 +7,11 @@ import '../../features/voice_interaction/application/voice_assistant_service.dar
 import '../../features/voice_interaction/domain/usecases/extract_location_usecase.dart';
 import '../../features/voice_interaction/domain/usecases/parse_intent_usecase.dart';
 import '../../features/obstacle_avoidance/data/datasources/obstacle_sse_datasource.dart';
+import '../../features/mapbox_navigation/application/navigation_service.dart';
+import '../../features/mapbox_navigation/data/data_sources/mapbox_datasource.dart';
+import '../../features/mapbox_navigation/data/repositories/campus_route_repository_impl.dart';
+import '../../features/mapbox_navigation/domain/repositories/route_repository.dart';
+import '../../features/mapbox_navigation/domain/usecases/get_route_usecase.dart';
 
 import '../services/speech_to_text/flutter_stt_service.dart';
 import '../services/speech_to_text/stt_service.dart';
@@ -37,12 +42,33 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => ParseIntentUseCase());
   sl.registerLazySingleton(() => ExtractLocationUseCase());
 
+  // Mapbox navigation
+  sl.registerLazySingleton(
+    () => MapboxDataSource(dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? ''),
+  );
+
+  sl.registerLazySingleton<RouteRepository>(
+    () => CampusRouteRepositoryImpl(sl()),
+  );
+
+  sl.registerLazySingleton(() => GetRouteUseCase(sl()));
+
+  sl.registerLazySingleton(
+    () => NavigationService(
+      getRoute: sl(),
+      onInstruction: (instruction) {
+        sl<VoiceAssistantService>().speakNavigationInstruction(instruction);
+      },
+    ),
+  );
+
   sl.registerLazySingleton(
     () => VoiceAssistantService(
       sttService: sl(),
       ttsService: sl(),
       parseIntent: sl(),
       extractLocation: sl(),
+      navigationService: sl(),
     ),
   );
 

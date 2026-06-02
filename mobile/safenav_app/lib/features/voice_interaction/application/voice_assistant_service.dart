@@ -1,4 +1,5 @@
 import 'package:audioplayers/audioplayers.dart';
+import '../../mapbox_navigation/application/navigation_service.dart';
 import '../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../core/services/speech_to_text/stt_service.dart';
 import '../../../core/services/text_to_speech/tts_service.dart';
@@ -14,6 +15,7 @@ class VoiceAssistantService {
   final TtsService _ttsService;
   final ParseIntentUseCase _parseIntent;
   final ExtractLocationUseCase _extractLocation;
+  final NavigationService _navigationService;
 
   late final SpeechQueue _speechQueue;
   late final VoiceCommandHandler _commandHandler;
@@ -30,10 +32,12 @@ class VoiceAssistantService {
     required TtsService ttsService,
     required ParseIntentUseCase parseIntent,
     required ExtractLocationUseCase extractLocation,
+    required NavigationService navigationService,
   })  : _sttService = sttService,
         _ttsService = ttsService,
         _parseIntent = parseIntent,
-        _extractLocation = extractLocation {
+        _extractLocation = extractLocation,
+        _navigationService = navigationService {
     _speechQueue = SpeechQueue(
       ttsService: _ttsService,
       onSpeaking: (text) => onStateChange?.call(VoiceSpeaking(text)),
@@ -42,6 +46,7 @@ class VoiceAssistantService {
     _commandHandler = VoiceCommandHandler(
       parseIntent: _parseIntent,
       extractLocation: _extractLocation,
+      navigationService: _navigationService,
     );
   }
 
@@ -140,7 +145,7 @@ class VoiceAssistantService {
       return;
     }
 
-    final request = _commandHandler.handle(trimmed);
+    final request = await _commandHandler.handle(trimmed);
     if (request.text.isEmpty) {
       onStateChange?.call(VoiceIdle());
       return;
@@ -151,6 +156,7 @@ class VoiceAssistantService {
   }
 
   void dispose() {
+    _navigationService.dispose();
     _cuePlayer.dispose();
   }
 }

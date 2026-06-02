@@ -6,6 +6,20 @@ class ParseIntentUseCase {
   VoiceCommandType call(String text) {
     final words = TextUtils.normalize(text).split(' ');
 
+    if (_containsIntent(words, VoiceConstants.nextInstructionTriggers)) {
+      return VoiceCommandType.nextInstruction;
+    }
+
+    if (_containsIntent(words, VoiceConstants.stopNavigationTriggers) &&
+        _containsIntent(words, VoiceConstants.navigateTriggers)) {
+      return VoiceCommandType.stopNavigation;
+    }
+
+    if (_containsIntent(words, VoiceConstants.startNavigationTriggers) &&
+        _containsIntent(words, VoiceConstants.navigateTriggers)) {
+      return VoiceCommandType.startNavigation;
+    }
+
     if (_containsIntent(words, VoiceConstants.moreInfoTriggers)) {
       return VoiceCommandType.moreInfo;
     }

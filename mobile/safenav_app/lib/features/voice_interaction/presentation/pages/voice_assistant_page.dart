@@ -35,14 +35,10 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
               final cubit = context.read<VoiceAssistantCubit>();
 
               if (state is VoiceIdle) {
-                // Start listening — command will fire automatically on silence
                 cubit.startListening();
               } else if (state is VoiceListening) {
-                // Tap during listening = CANCEL (not submit)
-                // VAD handles submission; this is the abort escape hatch
                 cubit.cancelListening();
               } else if (state is VoiceSpeaking) {
-                // Tap during speaking = interrupt TTS
                 cubit.stopSpeaking();
               }
             },

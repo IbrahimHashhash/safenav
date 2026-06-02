@@ -1,4 +1,3 @@
-
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/entities/voice_command.dart';
@@ -45,10 +44,6 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     await sttService.initialize();
   }
 
-  
-  
-  
-
   Future<void> speakObstacleInstruction(String text) async {
     if (text.trim().isEmpty) return;
 
@@ -61,18 +56,10 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.obstacle));
   }
 
-  
-  
-  
-
   Future<void> speakNavigationInstruction(String text) async {
     if (text.trim().isEmpty) return;
     await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.navigation));
   }
-
-  
-  
-  
 
   Future<void> startListening() async {
     if (_isPressActive || sttService.isListening) return;
@@ -82,16 +69,41 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     emit(VoiceListening());
 
     await sttService.startListening(
-      onResult: (text, isFinal) {},
+      onResult: (text, isFinal) {
+        if (isFinal && _isPressActive && !_hasHandledCommand) {
+          _isPressActive = false;
+          _hasHandledCommand = true;
+
+          sttService.stopListening().then((_) {
+            _handleRecognizedText(text);
+          });
+        }
+      },
       onTimeout: _onSttTimeout,
       onError: _onSttError,
     );
   }
 
+  Future<void> cancelListening() async {
+    if (!_isPressActive) return;
+
+    _isPressActive = false;
+    _hasHandledCommand = true;
+    await sttService.stopListening();
+    emit(VoiceIdle());
+  }
+
   void _onSttTimeout() {
     if (!_isPressActive || _hasHandledCommand) return;
     _isPressActive = false;
-    emit(VoiceIdle());
+
+    final text = (sttService as FlutterSttService).lastText;
+    if (text.isNotEmpty) {
+      _hasHandledCommand = true;
+      _handleRecognizedText(text);
+    } else {
+      emit(VoiceIdle());
+    }
   }
 
   void _onSttError(String message) {
@@ -100,31 +112,9 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
     emit(VoiceError(message));
   }
 
-  Future<void> stopListening() async {
-    if (!_isPressActive) return;
-
-    _isPressActive = false;
-    await sttService.stopListening();
-
-    if (_hasHandledCommand) return;
-
-    final text = (sttService as FlutterSttService).lastText;
-
-    if (text.isNotEmpty) {
-      _hasHandledCommand = true;
-      await _handleRecognizedText(text);
-    } else {
-      emit(VoiceIdle());
-    }
-  }
-
   Future<void> stopSpeaking() async {
     await _speechQueue.stopAll();
   }
-
-  
-  
-  
 
   Future<void> _handleRecognizedText(String text) async {
     final trimmed = text.trim();
@@ -133,7 +123,6 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
       return;
     }
 
-    
     if (intentParser.detect(trimmed) == VoiceCommandType.repeat) {
       if (_lastInstruction.isNotEmpty) {
         await _speechQueue.enqueue(

@@ -6,6 +6,10 @@ class FlutterSttService implements SttService {
   final AzureSpeechToText _azureStt;
   StreamSubscription? _subscription;
   String _lastText = '';
+  static const _silenceThreshold = Duration(milliseconds: 800);
+
+  Timer? _silenceTimer;
+  Function(String text, bool isFinal)? _pendingOnResult;
 
   FlutterSttService(this._azureStt);
 
@@ -24,15 +28,22 @@ class FlutterSttService implements SttService {
     required Function(String message) onError,
   }) async {
     await _subscription?.cancel();
+    _silenceTimer?.cancel();
     _lastText = '';
+    _pendingOnResult = onResult;
 
     _subscription = _azureStt.transcriptionStateStream.listen(
       (state) {
         final text = state.text;
         if (text.isNotEmpty) {
           _lastText = text;
-          print('[STT] captured: "$text"');
+
           onResult(text, false);
+
+          _silenceTimer?.cancel();
+          _silenceTimer = Timer(_silenceThreshold, () {
+            _pendingOnResult?.call(_lastText, true);
+          });
         }
       },
       onError: (e) => onError(e.toString()),
@@ -44,10 +55,15 @@ class FlutterSttService implements SttService {
 
   @override
   Future<void> stopListening() async {
+    _silenceTimer?.cancel();
+    _pendingOnResult = null;
+
     await _azureStt.stopListening();
-    await Future.delayed(const Duration(milliseconds: 500));
     await _subscription?.cancel();
   }
 
-  void dispose() => _azureStt.dispose();
+  void dispose() {
+    _silenceTimer?.cancel();
+    _azureStt.dispose();
+  }
 }

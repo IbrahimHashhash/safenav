@@ -23,8 +23,16 @@ class VoiceCommandHandler {
     if (intent == VoiceCommandType.navigate) {
       final location = extractLocation(text);
       if (location == null) {
-        return const SpeechRequest(
-          'Please specify a destination',
+        final candidate = extractLocation.extractCandidate(text);
+        if (candidate == null) {
+          return const SpeechRequest(
+            'Please specify a destination',
+            SpeechPriority.assistant,
+          );
+        }
+
+        return SpeechRequest(
+          'Sorry, I couldn’t find "$candidate" in the map.',
           SpeechPriority.assistant,
         );
       }

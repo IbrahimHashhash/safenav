@@ -32,12 +32,18 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
           body: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {
-              if (state is VoiceListening) {
-                context.read<VoiceAssistantCubit>().stopListening();
-              } else if (state is VoiceIdle) {
-                context.read<VoiceAssistantCubit>().startListening();
-              }else if (state is VoiceSpeaking) {
-                context.read<VoiceAssistantCubit>().stopSpeaking();
+              final cubit = context.read<VoiceAssistantCubit>();
+
+              if (state is VoiceIdle) {
+                // Start listening — command will fire automatically on silence
+                cubit.startListening();
+              } else if (state is VoiceListening) {
+                // Tap during listening = CANCEL (not submit)
+                // VAD handles submission; this is the abort escape hatch
+                cubit.cancelListening();
+              } else if (state is VoiceSpeaking) {
+                // Tap during speaking = interrupt TTS
+                cubit.stopSpeaking();
               }
             },
             child: () {

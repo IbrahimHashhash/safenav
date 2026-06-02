@@ -3,8 +3,9 @@ import 'package:get_it/get_it.dart';
 import 'package:azure_stt_flutter/azure_stt_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import '../../features/voice_interaction/domain/services/intent_parser_service.dart';
-import '../../features/voice_interaction/domain/services/location_extractor_service.dart';
+import '../../features/voice_interaction/application/voice_assistant_service.dart';
+import '../../features/voice_interaction/domain/usecases/extract_location_usecase.dart';
+import '../../features/voice_interaction/domain/usecases/parse_intent_usecase.dart';
 import '../../features/obstacle_avoidance/data/datasources/obstacle_sse_datasource.dart';
 
 import '../services/speech_to_text/flutter_stt_service.dart';
@@ -33,8 +34,17 @@ Future<void> initDependencies() async {
     () => FlutterSttService(sl()),
   );
 
-  sl.registerLazySingleton(() => IntentParserService());
-  sl.registerLazySingleton(() => LocationExtractorService());
+  sl.registerLazySingleton(() => ParseIntentUseCase());
+  sl.registerLazySingleton(() => ExtractLocationUseCase());
+
+  sl.registerLazySingleton(
+    () => VoiceAssistantService(
+      sttService: sl(),
+      ttsService: sl(),
+      parseIntent: sl(),
+      extractLocation: sl(),
+    ),
+  );
 
   sl.registerLazySingleton(
     () => ObstacleSseDatasource(

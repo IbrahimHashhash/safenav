@@ -13,22 +13,12 @@ void main() async {
   await dotenv.load(fileName: '.env');
   await initDependencies();
 
-  
-  final voiceCubit = VoiceAssistantCubit(
-    sttService: sl(),
-    ttsService: sl(),
-    intentParser: sl(),
-    locationExtractor: sl(),
-  );
+  final voiceCubit = VoiceAssistantCubit(sl());
 
-  
   final obstacleListener = ObstacleListenerService(
     datasource: sl<ObstacleSseDatasource>(),
     voiceCubit: voiceCubit,
   );
-
-  await obstacleListener.start();
-
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));
 }
 

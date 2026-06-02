@@ -1,32 +1,46 @@
-
-import '../../../../core/constants/help_info_messages.dart';
+import '../../../core/constants/help_info_messages.dart';
 import 'package:safenav_app/shared/models/location.dart';
-import '../../domain/entities/voice_command.dart';
-import '../../domain/services/intent_parser_service.dart';
-import '../../domain/services/location_extractor_service.dart';
+import '../domain/entities/voice_command.dart';
+import '../domain/usecases/extract_location_usecase.dart';
+import '../domain/usecases/parse_intent_usecase.dart';
 import 'speech_queue.dart';
 
 class VoiceCommandHandler {
-  final IntentParserService intentParser;
-  final LocationExtractorService locationExtractor;
+  final ParseIntentUseCase parseIntent;
+  final ExtractLocationUseCase extractLocation;
 
   const VoiceCommandHandler({
-    required this.intentParser,
-    required this.locationExtractor,
+    required this.parseIntent,
+    required this.extractLocation,
   });
 
   SpeechRequest handle(String text) {
-    final intent = intentParser.detect(text);
+    final intent = parseIntent(text);
 
     if (intent == VoiceCommandType.navigate) {
-      final location = locationExtractor.extract(text);
-      return location != null
-          ? SpeechRequest('Navigating to ${location.name}', SpeechPriority.assistant)
-          : const SpeechRequest('Sorry, I couldn\'t find that location', SpeechPriority.assistant);
-    }
+      final location = extractLocation(text);
+      if (location != null) {
+        return SpeechRequest(
+          'Got it. your route to "${location.name} is ready".',
+          SpeechPriority.assistant,
+        );
+      }
 
+      final candidate = extractLocation.extractCandidate(text);
+      if (candidate == null) {
+        return const SpeechRequest(
+          'You didn’t specify a location.',
+          SpeechPriority.assistant,
+        );
+      }
+
+      return SpeechRequest(
+        'Sorry, I couldn’t find "$candidate" in the map.',
+        SpeechPriority.assistant,
+      );
+    }
     if (intent == VoiceCommandType.listLocations) {
-      final category = locationExtractor.extractCategory(text);
+      final category = extractLocation.extractCategory(text);
       return SpeechRequest(_buildLocationsList(category), SpeechPriority.assistant);
     }
 

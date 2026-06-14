@@ -19,6 +19,7 @@ void main() async {
     datasource: sl<ObstacleSseDatasource>(),
     voiceCubit: voiceCubit,
   );
+
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));
 }
 

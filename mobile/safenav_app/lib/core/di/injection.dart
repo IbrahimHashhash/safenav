@@ -13,6 +13,8 @@ import '../../features/mapbox_navigation/data/repositories/campus_route_reposito
 import '../../features/mapbox_navigation/domain/repositories/route_repository.dart';
 import '../../features/mapbox_navigation/domain/usecases/get_route_usecase.dart';
 
+import '../services/compass/compass_service.dart';
+import '../services/compass/flutter_compass_service.dart';
 import '../services/speech_to_text/flutter_stt_service.dart';
 import '../services/speech_to_text/stt_service.dart';
 import '../services/text_to_speech/flutter_tts_service.dart';
@@ -31,31 +33,25 @@ Future<void> initDependencies() async {
     ),
   );
 
-  sl.registerLazySingleton<TtsService>(
-    () => FlutterTtsService(sl()),
-  );
-
-  sl.registerLazySingleton<SttService>(
-    () => FlutterSttService(sl()),
-  );
+  sl.registerLazySingleton<TtsService>(() => FlutterTtsService(sl()));
+  sl.registerLazySingleton<SttService>(() => FlutterSttService(sl()));
+  sl.registerLazySingleton<CompassService>(() => FlutterCompassService());
 
   sl.registerLazySingleton(() => ParseIntentUseCase());
   sl.registerLazySingleton(() => ExtractLocationUseCase());
 
-  // Mapbox navigation
   sl.registerLazySingleton(
     () => MapboxDataSource(dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? ''),
   );
-
   sl.registerLazySingleton<RouteRepository>(
     () => CampusRouteRepositoryImpl(sl()),
   );
-
   sl.registerLazySingleton(() => GetRouteUseCase(sl()));
 
   sl.registerLazySingleton(
     () => NavigationService(
       getRoute: sl(),
+      compass: sl<CompassService>(),
       onInstruction: (instruction) {
         sl<VoiceAssistantService>().speakNavigationInstruction(instruction);
       },

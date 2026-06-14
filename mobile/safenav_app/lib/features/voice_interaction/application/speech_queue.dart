@@ -1,10 +1,9 @@
-
-import '../../../../core/services/text_to_speech/tts_service.dart';
+import '../../../core/services/text_to_speech/tts_service.dart';
 
 enum SpeechPriority {
-  obstacle,   
-  navigation, 
-  assistant,  
+  obstacle,
+  navigation,
+  assistant,
 }
 
 class SpeechRequest {
@@ -30,15 +29,24 @@ class SpeechQueue {
   bool get isActive => _currentRequest != null;
 
   Future<void> enqueue(SpeechRequest incoming) async {
+    if (incoming.priority == SpeechPriority.navigation) {
+      _queue.removeWhere((r) => r.priority == SpeechPriority.navigation);
+    }
+
     if (_currentRequest == null) {
       await _speakNow(incoming);
       return;
     }
 
     if (incoming.priority.index < _currentRequest!.priority.index) {
-      
-      _queue.insert(0, _currentRequest!);
-      _queue.sort((a, b) => a.priority.index.compareTo(b.priority.index));
+      await ttsService.stop();
+      _currentRequest = null;
+      await _speakNow(incoming);
+      return;
+    }
+
+    if (incoming.priority == SpeechPriority.navigation &&
+        _currentRequest!.priority == SpeechPriority.navigation) {
       await ttsService.stop();
       _currentRequest = null;
       await _speakNow(incoming);

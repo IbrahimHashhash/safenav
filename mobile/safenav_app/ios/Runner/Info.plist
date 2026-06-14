@@ -66,5 +66,17 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>SafeNav uses your location to give turn-by-turn walking guidance and detect when you are off route.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>SafeNav uses your location to give turn-by-turn walking guidance and detect when you are off route.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>SafeNav uses your location to give turn-by-turn walking guidance and detect when you are off route.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SafeNav uses the microphone to recognize your voice commands.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>SafeNav uses speech recognition to understand your voice commands.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>SafeNav uses motion sensors to determine the direction you are facing while navigating.</string>
 </dict>
 </plist>

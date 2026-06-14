@@ -3,6 +3,9 @@ class TurnByTurnStep {
   final double distance;
   final double duration;
   final String maneuverType;
+  final String? modifier;
+  final double? bearingBefore;
+  final double? bearingAfter;
   final double lat;
   final double lng;
 
@@ -11,20 +14,32 @@ class TurnByTurnStep {
     required this.distance,
     required this.duration,
     required this.maneuverType,
+    this.modifier,
+    this.bearingBefore,
+    this.bearingAfter,
     required this.lat,
     required this.lng,
   });
 
   factory TurnByTurnStep.fromJson(Map<String, dynamic> json) {
-    final location = json["maneuver"]["location"];
+    final maneuver = json['maneuver'] as Map<String, dynamic>?;
+    final location = maneuver?['location'];
+
+    double? toDouble(dynamic v) =>
+        v == null ? null : (v as num).toDouble();
+
+    final hasLocation = location is List && location.length >= 2;
 
     return TurnByTurnStep(
-      instruction: json["maneuver"]?["instruction"] ?? "",
-      distance: (json["distance"] ?? 0).toDouble(),
-      duration: (json["duration"] ?? 0).toDouble(),
-      maneuverType: json["maneuver"]?["type"] ?? "",
-      lat: location != null ? location[1].toDouble() : 0,
-      lng: location != 0 ? location[0].toDouble() : 0,
+      instruction: (maneuver?['instruction'] as String?) ?? '',
+      distance: ((json['distance'] as num?) ?? 0).toDouble(),
+      duration: ((json['duration'] as num?) ?? 0).toDouble(),
+      maneuverType: (maneuver?['type'] as String?) ?? '',
+      modifier: maneuver?['modifier'] as String?,
+      bearingBefore: toDouble(maneuver?['bearing_before']),
+      bearingAfter: toDouble(maneuver?['bearing_after']),
+      lat: hasLocation ? (location[1] as num).toDouble() : 0.0,
+      lng: hasLocation ? (location[0] as num).toDouble() : 0.0,
     );
   }
 }

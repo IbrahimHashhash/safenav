@@ -16,7 +16,7 @@ class NavigationService {
   static const int _offRouteFixesRequired = 3;
   static const Duration _readyDelay = Duration(seconds: 3);
   static const Duration _periodicInterval = Duration(seconds: 18);
-  static const Duration _minBetweenAnnouncements = Duration(milliseconds: 1500);
+  static const Duration _minBetweenAnnouncements = Duration(seconds: 3);
   static const Duration _alignmentCooldown = Duration(seconds: 8);
   static const double _periodicMinMovement = 4.0;
   static const List<int> _milestones = [100, 50, 20];
@@ -31,6 +31,7 @@ class NavigationService {
   bool _isNavigating = false;
   bool _isReady = false;
   bool _isRerouting = false;
+  bool _isSpeaking = false;
 
   StreamSubscription<Position>? _locationSub;
   StreamSubscription<double?>? _compassSub;
@@ -52,9 +53,9 @@ class NavigationService {
     required GetRouteUseCase getRoute,
     required CompassService compass,
     required void Function(String) onInstruction,
-  })  : _getRoute = getRoute,
-        _compass = compass,
-        _onInstruction = onInstruction;
+  }) : _getRoute = getRoute,
+       _compass = compass,
+       _onInstruction = onInstruction;
 
   bool get isNavigating => _isNavigating;
   bool get hasRoute => _currentRoute != null;
@@ -77,7 +78,11 @@ class NavigationService {
       _periodicTimer?.cancel();
     }
 
-    _currentRoute = route;
+    final cleanedInstructions = route.instructions.map((step) {
+      return step.Edit(instruction: _normalizeInstruction(step.instruction));
+    }).toList();
+
+    _currentRoute = route.Edit(instructions: cleanedInstructions);
     _currentDestination = destination;
     _currentStepIndex = 0;
     _isNavigating = false;
@@ -136,15 +141,26 @@ class NavigationService {
     _consecutiveOffRouteFixes = 0;
     _lastPeriodicPosition = null;
 
-    return wasNavigating
-        ? 'Navigation stopped.'
-        : 'Navigation is not active.';
+    return wasNavigating ? 'Navigation stopped.' : 'Navigation is not active.';
   }
 
   void dispose() {
     _stopSensors();
     _readyTimer?.cancel();
     _periodicTimer?.cancel();
+  }
+
+  String _normalizeInstruction(String text) {
+    final lower = text.toLowerCase();
+
+    return lower
+        .replaceAll('bear left', 'follow the road curving left')
+        .replaceAll('bear right', 'follow the road curving right')
+        .replaceAll('slight left', 'slight left')
+        .replaceAll('slight right', 'slight right')
+        .replaceAll('turn left', 'turn left')
+        .replaceAll('turn right', 'turn right')
+        .replaceAll('continue', 'continue straight');
   }
 
   void _startSensors() {
@@ -182,10 +198,7 @@ class NavigationService {
     if (!_isNavigating || _currentRoute == null) return;
 
     if (_currentPosition == null) {
-      _emit(
-        'Waiting for GPS signal. Please wait a few seconds.',
-        urgent: true,
-      );
+      _emit('Waiting for GPS signal. Please wait a few seconds.', urgent: true);
       return;
     }
 
@@ -275,8 +288,7 @@ class NavigationService {
     }
 
     for (final ms in _milestones) {
-      if (!_milestonesAnnounced.contains(ms) &&
-          distToNext <= ms.toDouble()) {
+      if (!_milestonesAnnounced.contains(ms) && distToNext <= ms.toDouble()) {
         final phrase = _maneuverPhrase(next);
         _emit('In $ms meters, $phrase.');
         _milestonesAnnounced.add(ms);
@@ -330,9 +342,7 @@ class NavigationService {
 
   String? _checkAlignment() {
     final heading = _currentHeading;
-    if (heading == null ||
-        _currentPosition == null ||
-        _currentRoute == null) {
+    if (heading == null || _currentPosition == null || _currentRoute == null) {
       return null;
     }
     final required = _requiredHeading();
@@ -448,20 +458,30 @@ class NavigationService {
   }
 
   Future<Position> _getCurrentLocation() async {
+    print('ENTERING _getCurrentLocation');
+
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    print('serviceEnabled=$serviceEnabled');
+
     if (!serviceEnabled) {
-      throw Exception('Please enable location services');
+      await Geolocator.openLocationSettings();
+      throw Exception('Location services disabled');
     }
 
-    var permission = await Geolocator.checkPermission();
+    LocationPermission permission = await Geolocator.checkPermission();
+    print('permission=$permission');
+
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        throw Exception('Location permission is required');
-      }
     }
+
     if (permission == LocationPermission.deniedForever) {
-      throw Exception('Please enable location permission in settings');
+      await Geolocator.openAppSettings();
+      throw Exception('Permission permanently denied');
+    }
+
+    if (permission == LocationPermission.denied) {
+      throw Exception('Location permission is required');
     }
 
     return Geolocator.getCurrentPosition();
@@ -470,8 +490,9 @@ class NavigationService {
   void _emit(String text, {bool urgent = false}) {
     final now = DateTime.now();
 
-    if (!urgent &&
-        now.difference(_lastEmitAt) < _minBetweenAnnouncements) {
+    if (_isSpeaking && !urgent) return;
+
+    if (!urgent && now.difference(_lastEmitAt) < _minBetweenAnnouncements) {
       return;
     }
     if (text == _lastEmitText &&
@@ -482,5 +503,9 @@ class NavigationService {
     _lastEmitAt = now;
     _lastEmitText = text;
     _onInstruction(text);
+
+    Future.delayed(const Duration(seconds: 2), () {
+      _isSpeaking = false;
+    });
   }
 }

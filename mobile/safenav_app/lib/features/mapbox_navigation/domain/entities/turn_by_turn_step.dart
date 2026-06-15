@@ -25,8 +25,7 @@ class TurnByTurnStep {
     final maneuver = json['maneuver'] as Map<String, dynamic>?;
     final location = maneuver?['location'];
 
-    double? toDouble(dynamic v) =>
-        v == null ? null : (v as num).toDouble();
+    double? toDouble(dynamic v) => v == null ? null : (v as num).toDouble();
 
     final hasLocation = location is List && location.length >= 2;
 
@@ -40,6 +39,30 @@ class TurnByTurnStep {
       bearingAfter: toDouble(maneuver?['bearing_after']),
       lat: hasLocation ? (location[1] as num).toDouble() : 0.0,
       lng: hasLocation ? (location[0] as num).toDouble() : 0.0,
+    );
+  }
+
+  TurnByTurnStep Edit({
+    String? instruction,
+    double? distance,
+    double? duration,
+    String? maneuverType,
+    String? modifier,
+    double? bearingBefore,
+    double? bearingAfter,
+    double? lat,
+    double? lng,
+  }) {
+    return TurnByTurnStep(
+      instruction: instruction ?? this.instruction,
+      distance: distance ?? this.distance,
+      duration: duration ?? this.duration,
+      maneuverType: maneuverType ?? this.maneuverType,
+      modifier: modifier ?? this.modifier,
+      bearingBefore: bearingBefore ?? this.bearingBefore,
+      bearingAfter: bearingAfter ?? this.bearingAfter,
+      lat: lat ?? this.lat,
+      lng: lng ?? this.lng,
     );
   }
 }

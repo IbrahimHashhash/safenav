@@ -93,6 +93,104 @@ double distancePointToPolylineMeters(
   return minDist;
 }
 
+/// Result of projecting a point onto a polyline.
+class PolylineProjection {
+  const PolylineProjection({
+    required this.segmentIndex,
+    required this.distanceMeters,
+    required this.segmentBearing,
+    required this.snappedLat,
+    required this.snappedLng,
+  });
+
+  /// Index of the segment [i, i+1] the point projected onto.
+  final int segmentIndex;
+
+  /// Perpendicular distance from the point to the route, in meters.
+  final double distanceMeters;
+
+  /// Bearing of the matched segment (the direction the user *should* face),
+  /// in degrees 0..360.
+  final double segmentBearing;
+
+  final double snappedLat;
+  final double snappedLng;
+}
+
+/// Projects a GPS point onto a route polyline and returns the closest segment,
+/// its bearing, and the snapped point.
+///
+/// This is what makes guidance "path-relative": instead of pointing the user
+/// at the next maneuver node (which is wrong when walking along the edge of a
+/// wide path), we align them with the direction of the route segment they are
+/// currently on.
+PolylineProjection? projectOntoPolyline(
+  double pLat,
+  double pLng,
+  List<List<double>> coords,
+) {
+  if (coords.length < 2) return null;
+
+  const mPerDegLat = 111320.0;
+  double bestDist = double.infinity;
+  int bestIdx = 0;
+  double bestLat = pLat;
+  double bestLng = pLng;
+
+  for (int i = 0; i < coords.length - 1; i++) {
+    final aLat = coords[i][0];
+    final aLng = coords[i][1];
+    final bLat = coords[i + 1][0];
+    final bLng = coords[i + 1][1];
+
+    final lat0 = (aLat + bLat) / 2.0;
+    final mPerDegLng = mPerDegLat * math.cos(lat0 * math.pi / 180);
+
+    final px = pLng * mPerDegLng;
+    final py = pLat * mPerDegLat;
+    final ax = aLng * mPerDegLng;
+    final ay = aLat * mPerDegLat;
+    final bx = bLng * mPerDegLng;
+    final by = bLat * mPerDegLat;
+
+    final dx = bx - ax;
+    final dy = by - ay;
+    final lenSq = dx * dx + dy * dy;
+
+    double t = lenSq < 1e-9 ? 0 : ((px - ax) * dx + (py - ay) * dy) / lenSq;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+
+    final ex = ax + t * dx;
+    final ey = ay + t * dy;
+    final ddx = px - ex;
+    final ddy = py - ey;
+    final dist = math.sqrt(ddx * ddx + ddy * ddy);
+
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+      bestLng = ex / mPerDegLng;
+      bestLat = ey / mPerDegLat;
+    }
+  }
+
+  final bearing = bearingBetween(
+    coords[bestIdx][0],
+    coords[bestIdx][1],
+    coords[bestIdx + 1][0],
+    coords[bestIdx + 1][1],
+  );
+
+  return PolylineProjection(
+    segmentIndex: bestIdx,
+    distanceMeters: bestDist,
+    segmentBearing: bearing,
+    snappedLat: bestLat,
+    snappedLng: bestLng,
+  );
+}
+
 double _haversineMeters(
   double lat1,
   double lng1,

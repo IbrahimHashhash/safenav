@@ -12,6 +12,7 @@ import '../../features/mapbox_navigation/data/data_sources/mapbox_datasource.dar
 import '../../features/mapbox_navigation/data/repositories/campus_route_repository_impl.dart';
 import '../../features/mapbox_navigation/domain/repositories/route_repository.dart';
 import '../../features/mapbox_navigation/domain/usecases/get_route_usecase.dart';
+import '../../features/mapbox_navigation/presentation/cubit/navigation_map_cubit.dart';
 
 import '../services/compass/compass_service.dart';
 import '../services/compass/flutter_compass_service.dart';
@@ -67,6 +68,8 @@ Future<void> initDependencies() async {
       navigationService: sl(),
     ),
   );
+
+  sl.registerFactory(() => NavigationMapCubit(sl<NavigationService>()));
 
   sl.registerLazySingleton(
     () => ObstacleSseDatasource(

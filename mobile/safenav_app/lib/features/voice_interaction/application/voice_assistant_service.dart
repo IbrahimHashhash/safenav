@@ -25,6 +25,7 @@ class VoiceAssistantService {
   bool _isPressActive = false;
   bool _hasHandledCommand = false;
   final List<SpeechRequest> _deferredWhileListening = [];
+  Future<void> _sttQueue = Future<void>.value();
 
   void Function(VoiceAssistantState)? onStateChange;
 
@@ -85,28 +86,37 @@ class VoiceAssistantService {
   }
 
   Future<void> startListening() async {
-    if (_isPressActive || _sttService.isListening) return;
+    if (_isPressActive) return;
 
     _isPressActive = true;
     _hasHandledCommand = false;
     await _cueListeningStarted();
+    if (!_isPressActive) return;
 
     onStateChange?.call(VoiceListening());
 
-    await _sttService.startListening(
-      onResult: (text, isFinal) {
-        if (isFinal && _isPressActive && !_hasHandledCommand) {
-          _isPressActive = false;
-          _hasHandledCommand = true;
-          _sttService.stopListening().then((_) {
-            _flushDeferred();
-            _handleRecognizedText(text);
-          });
-        }
-      },
-      onTimeout: _onSttTimeout,
-      onError: _onSttError,
+    await _runStt(
+      () => _sttService.startListening(
+        onResult: (text, isFinal) {
+          if (isFinal && _isPressActive && !_hasHandledCommand) {
+            _isPressActive = false;
+            _hasHandledCommand = true;
+            _runStt(() => _sttService.stopListening()).then((_) {
+              _flushDeferred();
+              _handleRecognizedText(text);
+            });
+          }
+        },
+        onTimeout: _onSttTimeout,
+        onError: _onSttError,
+      ),
     );
+  }
+
+  Future<void> _runStt(Future<void> Function() action) {
+    final result = _sttQueue.then((_) => action());
+    _sttQueue = result.catchError((_) {});
+    return result;
   }
 
   Future<void> _cueListeningStarted() async {
@@ -118,7 +128,7 @@ class VoiceAssistantService {
   Future<void> cancelListening() async {
     _isPressActive = false;
     _hasHandledCommand = true;
-    await _sttService.stopListening();
+    await _runStt(() => _sttService.stopListening());
     final hadDeferred = _deferredWhileListening.isNotEmpty;
     _flushDeferred();
     if (!hadDeferred) onStateChange?.call(VoiceIdle());

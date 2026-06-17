@@ -85,7 +85,7 @@ class FakeRouteRepository implements RouteRepository {
   }
 }
 
-VoiceAssistantService buildService(FakeStt stt, FakeTts tts) {
+VoiceAssistantService buildService(SttService stt, FakeTts tts) {
   final nav = NavigationService(
     getRoute: GetRouteUseCase(FakeRouteRepository()),
     compass: FakeCompass(),
@@ -98,6 +98,39 @@ VoiceAssistantService buildService(FakeStt stt, FakeTts tts) {
     extractLocation: ExtractLocationUseCase(),
     navigationService: nav,
   );
+}
+
+class OrderedStt implements SttService {
+  final List<String> log = [];
+  int _concurrent = 0;
+  int maxConcurrent = 0;
+  bool _listening = false;
+
+  @override
+  bool get isListening => _listening;
+
+  @override
+  Future<bool> initialize() async => true;
+
+  @override
+  Future<void> startListening({
+    required Function(String text, bool isFinal) onResult,
+    required Function() onTimeout,
+    required Function(String message) onError,
+  }) =>
+      _op('start', () => _listening = true);
+
+  @override
+  Future<void> stopListening() => _op('stop', () => _listening = false);
+
+  Future<void> _op(String name, void Function() effect) async {
+    _concurrent++;
+    if (_concurrent > maxConcurrent) maxConcurrent = _concurrent;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    effect();
+    log.add(name);
+    _concurrent--;
+  }
 }
 
 void main() {
@@ -173,5 +206,21 @@ void main() {
     await pumpEventQueue();
 
     expect(tts.speaking, 'obstacle ahead');
+  });
+
+  test('rapid start/cancel/start never overlaps and ends listening', () async {
+    final stt = OrderedStt();
+    final tts = FakeTts();
+    final service = buildService(stt, tts);
+
+    final f1 = service.startListening();
+    final f2 = service.cancelListening();
+    final f3 = service.startListening();
+    await Future.wait([f1, f2, f3]);
+    await pumpEventQueue();
+
+    expect(stt.maxConcurrent, 1);
+    expect(stt.log.last, 'start');
+    expect(stt.isListening, isTrue);
   });
 }

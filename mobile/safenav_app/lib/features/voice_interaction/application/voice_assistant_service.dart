@@ -24,6 +24,7 @@ class VoiceAssistantService {
   String _lastInstruction = '';
   bool _isPressActive = false;
   bool _hasHandledCommand = false;
+  final List<SpeechRequest> _deferredWhileListening = [];
 
   void Function(VoiceAssistantState)? onStateChange;
 
@@ -54,19 +55,33 @@ class VoiceAssistantService {
 
   Future<void> speakObstacleInstruction(String text) async {
     if (text.trim().isEmpty) return;
-
-    if (_isPressActive) {
-      _isPressActive = false;
-      _hasHandledCommand = true;
-      await _sttService.stopListening();
-    }
-
-    await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.obstacle));
+    await _enqueueOrDefer(SpeechRequest(text, SpeechPriority.obstacle));
   }
 
   Future<void> speakNavigationInstruction(String text) async {
     if (text.trim().isEmpty) return;
-    await _speechQueue.enqueue(SpeechRequest(text, SpeechPriority.navigation));
+    await _enqueueOrDefer(SpeechRequest(text, SpeechPriority.navigation));
+  }
+
+  Future<void> _enqueueOrDefer(SpeechRequest request) async {
+    if (_isPressActive) {
+      if (request.priority == SpeechPriority.navigation) {
+        _deferredWhileListening
+            .removeWhere((r) => r.priority == SpeechPriority.navigation);
+      }
+      _deferredWhileListening.add(request);
+      return;
+    }
+    await _speechQueue.enqueue(request);
+  }
+
+  Future<void> _flushDeferred() async {
+    if (_deferredWhileListening.isEmpty) return;
+    final pending = List<SpeechRequest>.from(_deferredWhileListening);
+    _deferredWhileListening.clear();
+    for (final request in pending) {
+      await _speechQueue.enqueue(request);
+    }
   }
 
   Future<void> startListening() async {
@@ -83,7 +98,10 @@ class VoiceAssistantService {
         if (isFinal && _isPressActive && !_hasHandledCommand) {
           _isPressActive = false;
           _hasHandledCommand = true;
-          _sttService.stopListening().then((_) => _handleRecognizedText(text));
+          _sttService.stopListening().then((_) {
+            _flushDeferred();
+            _handleRecognizedText(text);
+          });
         }
       },
       onTimeout: _onSttTimeout,
@@ -98,12 +116,12 @@ class VoiceAssistantService {
   }
 
   Future<void> cancelListening() async {
-    if (!_isPressActive) return;
-
     _isPressActive = false;
     _hasHandledCommand = true;
     await _sttService.stopListening();
-    onStateChange?.call(VoiceIdle());
+    final hadDeferred = _deferredWhileListening.isNotEmpty;
+    _flushDeferred();
+    if (!hadDeferred) onStateChange?.call(VoiceIdle());
   }
 
   void _onSttTimeout() {
@@ -111,10 +129,12 @@ class VoiceAssistantService {
     _isPressActive = false;
 
     final text = (_sttService as FlutterSttService).lastText;
+    final hadDeferred = _deferredWhileListening.isNotEmpty;
+    _flushDeferred();
     if (text.isNotEmpty) {
       _hasHandledCommand = true;
       _handleRecognizedText(text);
-    } else {
+    } else if (!hadDeferred) {
       onStateChange?.call(VoiceIdle());
     }
   }
@@ -122,15 +142,17 @@ class VoiceAssistantService {
   void _onSttError(String message) {
     if (!_isPressActive) return;
     _isPressActive = false;
-    onStateChange?.call(VoiceError(message));
+    final hadDeferred = _deferredWhileListening.isNotEmpty;
+    _flushDeferred();
+    if (!hadDeferred) onStateChange?.call(VoiceError(message));
   }
 
-  Future<void> stopSpeaking() => _speechQueue.stopAll();
+  Future<void> stopSpeaking() => _speechQueue.skipCurrent();
 
   Future<void> _handleRecognizedText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
-      onStateChange?.call(VoiceIdle());
+      if (!_speechQueue.isActive) onStateChange?.call(VoiceIdle());
       return;
     }
 
@@ -139,7 +161,7 @@ class VoiceAssistantService {
         await _speechQueue.enqueue(
           SpeechRequest(_lastInstruction, SpeechPriority.assistant),
         );
-      } else {
+      } else if (!_speechQueue.isActive) {
         onStateChange?.call(VoiceIdle());
       }
       return;
@@ -147,7 +169,7 @@ class VoiceAssistantService {
 
     final request = await _commandHandler.handle(trimmed);
     if (request.text.isEmpty) {
-      onStateChange?.call(VoiceIdle());
+      if (!_speechQueue.isActive) onStateChange?.call(VoiceIdle());
       return;
     }
 

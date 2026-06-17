@@ -38,7 +38,7 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
                 cubit.startListening();
               } else if (state is VoiceListening) {
                 cubit.cancelListening();
-              } else if (state is VoiceSpeaking) {
+              } else {
                 cubit.stopSpeaking();
               }
             },

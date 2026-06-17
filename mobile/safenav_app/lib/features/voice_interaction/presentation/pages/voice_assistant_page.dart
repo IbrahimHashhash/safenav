@@ -26,9 +26,6 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
     return BlocBuilder<VoiceAssistantCubit, VoiceAssistantState>(
       builder: (context, state) {
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('Campus Voice Assistant'),
-          ),
           body: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {

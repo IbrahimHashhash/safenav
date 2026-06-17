@@ -38,23 +38,6 @@ class SpeechQueue {
       return;
     }
 
-    final current = _currentRequest!;
-
-    if (_shouldPreempt(incoming, current)) {
-      await ttsService.stop();
-      _currentRequest = null;
-
-      final isStaleNavigation =
-          incoming.priority == SpeechPriority.navigation &&
-              current.priority == SpeechPriority.navigation;
-      if (!isStaleNavigation) {
-        _insertByPriority(current);
-      }
-
-      await _speakNow(incoming);
-      return;
-    }
-
     _insertByPriority(incoming);
   }
 
@@ -65,23 +48,6 @@ class SpeechQueue {
       i++;
     }
     _queue.insert(i, request);
-  }
-
-  bool _shouldPreempt(SpeechRequest incoming, SpeechRequest current) {
-    if (incoming.priority == SpeechPriority.obstacle) {
-      return current.priority == SpeechPriority.navigation;
-    }
-    if (incoming.priority == SpeechPriority.navigation) {
-      return current.priority == SpeechPriority.navigation;
-    }
-    return false;
-  }
-
-  Future<void> stopAll() async {
-    await ttsService.stop();
-    _queue.clear();
-    _currentRequest = null;
-    onIdle();
   }
 
   Future<void> skipCurrent() async {

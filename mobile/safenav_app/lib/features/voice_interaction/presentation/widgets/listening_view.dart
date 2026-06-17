@@ -15,7 +15,7 @@ class ListeningView extends StatelessWidget {
           children: [
             SoundWave(
               colors: [Colors.white, Colors.white],
-              duration: Duration(milliseconds: 2400),
+              duration: Duration(milliseconds: 1600),
             ),
             SizedBox(height: 28),
             Text(

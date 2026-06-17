@@ -43,7 +43,6 @@ class ObstacleSseDatasource {
       final response = await _client!.send(request);
 
       if (response.statusCode != 200) {
-        print('[ObstacleSse] unexpected status: ${response.statusCode}');
         disconnect();
         return;
       }
@@ -54,17 +53,14 @@ class ObstacleSseDatasource {
           .listen(
             _handleLine,
             onError: (Object error) {
-              print('[ObstacleSse] stream error: $error');
               disconnect();
             },
             onDone: () {
-              print('[ObstacleSse] stream closed by server');
               disconnect();
             },
             cancelOnError: false,
           );
     } catch (e) {
-      print('[ObstacleSse] connect error: $e');
       disconnect();
     }
   }
@@ -79,11 +75,8 @@ class ObstacleSseDatasource {
     try {
       final map = jsonDecode(jsonStr) as Map<String, dynamic>;
       final instruction = ObstacleInstruction.fromJson(map);
-      print('[ObstacleSse] received: $instruction');
       _controller?.add(instruction);
-    } catch (e) {
-      print('[ObstacleSse] parse error on "$jsonStr": $e');
-    }
+    } catch (_) {}
   }
 
   

@@ -458,10 +458,7 @@ class NavigationService {
   }
 
   Future<Position> _getCurrentLocation() async {
-    print('ENTERING _getCurrentLocation');
-
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    print('serviceEnabled=$serviceEnabled');
 
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
@@ -469,7 +466,6 @@ class NavigationService {
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
-    print('permission=$permission');
 
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();

@@ -26,9 +26,6 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
     return BlocBuilder<VoiceAssistantCubit, VoiceAssistantState>(
       builder: (context, state) {
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('Campus Voice Assistant'),
-          ),
           body: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {
@@ -38,7 +35,7 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
                 cubit.startListening();
               } else if (state is VoiceListening) {
                 cubit.cancelListening();
-              } else if (state is VoiceSpeaking) {
+              } else {
                 cubit.stopSpeaking();
               }
             },

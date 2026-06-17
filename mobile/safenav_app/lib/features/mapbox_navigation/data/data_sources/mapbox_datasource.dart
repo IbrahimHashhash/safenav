@@ -18,13 +18,9 @@ class MapboxDataSource {
         "?geometries=geojson&steps=true&overview=full&language=en"
         "&access_token=$token";
 
-    print("MAPBOX URL: $url");
-
     final response = await http.get(Uri.parse(url));
 
     final data = jsonDecode(response.body);
-
-    print("MAPBOX RESPONSE: $data");
 
     return data;
   }

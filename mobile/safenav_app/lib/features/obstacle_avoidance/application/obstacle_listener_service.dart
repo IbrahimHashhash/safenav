@@ -16,7 +16,6 @@ class ObstacleListenerService {
 
   Future<void> start() async {
     _subscription = datasource.stream.listen((instruction) {
-      print('[ObstacleListener] forwarding to cubit: "${instruction.message}"');
       voiceCubit.speakObstacleInstruction(instruction.message);
     });
 

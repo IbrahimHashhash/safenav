@@ -162,7 +162,7 @@ class VoiceAssistantService {
   Future<void> _handleRecognizedText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
-      if (!_speechQueue.isActive) onStateChange?.call(VoiceIdle());
+      _emitIdleIfQuiet();
       return;
     }
 
@@ -171,20 +171,24 @@ class VoiceAssistantService {
         await _speechQueue.enqueue(
           SpeechRequest(_lastInstruction, SpeechPriority.assistant),
         );
-      } else if (!_speechQueue.isActive) {
-        onStateChange?.call(VoiceIdle());
+      } else {
+        _emitIdleIfQuiet();
       }
       return;
     }
 
     final request = await _commandHandler.handle(trimmed);
     if (request.text.isEmpty) {
-      if (!_speechQueue.isActive) onStateChange?.call(VoiceIdle());
+      _emitIdleIfQuiet();
       return;
     }
 
     _lastInstruction = request.text;
     await _speechQueue.enqueue(request);
+  }
+
+  void _emitIdleIfQuiet() {
+    if (!_speechQueue.isActive) onStateChange?.call(VoiceIdle());
   }
 
   void dispose() {

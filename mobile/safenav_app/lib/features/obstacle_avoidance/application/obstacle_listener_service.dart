@@ -39,18 +39,23 @@ class ObstacleListenerService {
   String _lastSpoken = '';
   DateTime _lastSpokenAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  Future<void> start() async {
-    if (_running) return;
+  /// Whether frames are currently being streamed to the server.
+  bool get isStreaming => _running;
+
+  /// Starts streaming camera frames to the detection server.
+  /// Returns true if streaming actually began (camera + server available).
+  Future<bool> start() async {
+    if (_running) return true;
     _running = true;
 
     _subscription = datasource.stream.listen(_onInstruction);
 
     final connected = await datasource.connect();
     if (!connected) {
-      // Leave _running true so a later retry via start() is possible after
-      // stop(); but without a connection there is nothing to capture for.
       _running = false;
-      return;
+      await _subscription?.cancel();
+      _subscription = null;
+      return false;
     }
 
     final cameraReady = await cameraSource.initialize();
@@ -58,10 +63,12 @@ class ObstacleListenerService {
       _running = false;
       await _subscription?.cancel();
       _subscription = null;
-      return;
+      await datasource.disconnect();
+      return false;
     }
 
     unawaited(_captureLoop());
+    return true;
   }
 
   Future<void> _captureLoop() async {

@@ -166,6 +166,9 @@ class VoiceAssistantService {
       return;
     }
 
+    // Surface the recognized transcript so the UI can caption the input.
+    onStateChange?.call(VoiceProcessing(trimmed));
+
     if (_parseIntent(trimmed) == VoiceCommandType.repeat) {
       if (_lastInstruction.isNotEmpty) {
         await _speechQueue.enqueue(

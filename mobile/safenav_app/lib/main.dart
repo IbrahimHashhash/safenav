@@ -41,17 +41,6 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   @override
-  void initState() {
-    super.initState();
-    // Start obstacle detection once the first frame is rendered, so camera /
-    // server failures never block app startup. Errors inside start() are
-    // handled internally (it simply stops if the camera or server is absent).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.obstacleListener.start();
-    });
-  }
-
-  @override
   void dispose() {
     widget.obstacleListener.stop();
     super.dispose();
@@ -66,7 +55,9 @@ class _MyAppState extends State<MyApp> {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark(),
-        home: const VoiceAssistantPage(),
+        home: VoiceAssistantPage(
+          obstacleListener: widget.obstacleListener,
+        ),
       ),
     );
   }

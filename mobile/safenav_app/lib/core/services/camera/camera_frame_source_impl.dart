@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/widgets.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'camera_frame_source.dart';
@@ -18,6 +19,22 @@ class CameraFrameSourceImpl implements CameraFrameSource {
   @override
   bool get isReady =>
       _controller != null && _controller!.value.isInitialized;
+
+  @override
+  Size? get previewSize {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return null;
+    return c.value.previewSize;
+  }
+
+  @override
+  Widget buildPreview({Widget? placeholder}) {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) {
+      return placeholder ?? const SizedBox.shrink();
+    }
+    return CameraPreview(c);
+  }
 
   @override
   Future<bool> initialize() async {

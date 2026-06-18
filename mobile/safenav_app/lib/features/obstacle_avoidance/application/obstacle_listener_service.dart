@@ -3,15 +3,16 @@ import 'dart:async';
 import '../../../core/services/camera/camera_frame_source.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../data/datasources/navigation_ws_datasource.dart';
-import '../domain/entities/obstacle_instruction.dart';
+import '../domain/entities/detection_result.dart';
 
 /// Drives the obstacle-avoidance loop:
-///   camera frame -> WebSocket -> server -> JSON response ->
+///   camera frame -> WebSocket -> server -> JSON (+ optional previews) ->
 ///   spoken `instruction` (via the shared TTS priority queue).
 ///
-/// Obstacle speech goes through [VoiceAssistantCubit.speakObstacleInstruction],
-/// which enqueues at the highest priority, so obstacle warnings preempt — and
-/// never overlap — Mapbox navigation instructions on the single TTS engine.
+/// Also re-publishes the full [DetectionResult] stream so the developer screen
+/// can show previews, obstacles and metrics. Obstacle speech goes through
+/// [VoiceAssistantCubit.speakObstacleInstruction] (highest priority), so it
+/// preempts — and never overlaps — Mapbox navigation on the single TTS engine.
 class ObstacleListenerService {
   ObstacleListenerService({
     required this.datasource,
@@ -23,46 +24,47 @@ class ObstacleListenerService {
   final CameraFrameSource cameraSource;
   final VoiceAssistantCubit voiceCubit;
 
-  /// Minimum delay between two capture attempts. takePicture() itself adds
-  /// latency, so the effective rate is a few FPS — plenty, since the server
-  /// also skips near-identical frames.
   static const Duration _captureInterval = Duration(milliseconds: 300);
-
-  /// Don't repeat the *same* spoken instruction more often than this. A new,
-  /// different instruction is spoken immediately (a new obstacle matters).
   static const Duration _repeatCooldown = Duration(seconds: 4);
 
-  StreamSubscription<ObstacleInstruction>? _subscription;
+  StreamSubscription<DetectionResult>? _subscription;
   bool _running = false;
+  bool _previewsEnabled = false;
   int _frameId = 0;
 
   String _lastSpoken = '';
   DateTime _lastSpokenAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// Whether frames are currently being streamed to the server.
+  final StreamController<DetectionResult> _resultsController =
+      StreamController<DetectionResult>.broadcast();
+  DetectionResult? _lastResult;
+
+  /// Full per-frame results, for the developer screen.
+  Stream<DetectionResult> get results => _resultsController.stream;
+  DetectionResult? get lastResult => _lastResult;
+
   bool get isStreaming => _running;
 
-  /// Starts streaming camera frames to the detection server.
-  /// Returns true if streaming actually began (camera + server available).
+  /// When true, frames request the model preview images back from the server.
+  /// Toggled on while the developer screen is visible.
+  void setPreviewsEnabled(bool enabled) => _previewsEnabled = enabled;
+
+  /// Starts streaming camera frames. Returns true if streaming began.
   Future<bool> start() async {
     if (_running) return true;
     _running = true;
 
-    _subscription = datasource.stream.listen(_onInstruction);
+    _subscription = datasource.stream.listen(_onResult);
 
     final connected = await datasource.connect();
     if (!connected) {
-      _running = false;
-      await _subscription?.cancel();
-      _subscription = null;
+      await _teardown();
       return false;
     }
 
     final cameraReady = await cameraSource.initialize();
     if (!cameraReady) {
-      _running = false;
-      await _subscription?.cancel();
-      _subscription = null;
+      await _teardown();
       await datasource.disconnect();
       return false;
     }
@@ -77,7 +79,11 @@ class ObstacleListenerService {
         final jpeg = await cameraSource.captureJpeg();
         if (!_running) break;
         if (jpeg != null) {
-          datasource.sendFrame(jpeg, _frameId);
+          datasource.sendFrame(
+            jpeg,
+            _frameId,
+            includePreviews: _previewsEnabled,
+          );
           _frameId++;
         }
       }
@@ -85,12 +91,18 @@ class ObstacleListenerService {
     }
   }
 
-  void _onInstruction(ObstacleInstruction instruction) {
-    final text = instruction.message.trim();
+  void _onResult(DetectionResult result) {
+    _lastResult = result;
+    if (!_resultsController.isClosed) {
+      _resultsController.add(result);
+    }
+    _maybeSpeak(result.instruction);
+  }
+
+  void _maybeSpeak(String instruction) {
+    final text = instruction.trim();
     if (text.isEmpty) return;
 
-    // De-duplicate: suppress an identical instruction repeated within the
-    // cooldown, but let a different instruction through right away.
     final now = DateTime.now();
     if (text == _lastSpoken &&
         now.difference(_lastSpokenAt) < _repeatCooldown) {
@@ -102,11 +114,20 @@ class ObstacleListenerService {
     voiceCubit.speakObstacleInstruction(text);
   }
 
-  Future<void> stop() async {
+  Future<void> _teardown() async {
     _running = false;
     await _subscription?.cancel();
     _subscription = null;
+  }
+
+  Future<void> stop() async {
+    await _teardown();
     await datasource.disconnect();
     await cameraSource.dispose();
+  }
+
+  void dispose() {
+    stop();
+    _resultsController.close();
   }
 }

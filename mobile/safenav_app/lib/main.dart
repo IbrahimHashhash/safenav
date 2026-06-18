@@ -7,7 +7,7 @@ import 'core/services/camera/camera_frame_source.dart';
 import 'features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
 import 'features/obstacle_avoidance/application/obstacle_listener_service.dart';
 import 'features/voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
-import 'features/voice_interaction/presentation/pages/voice_assistant_page.dart';
+import 'features/home/presentation/home_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,7 +55,7 @@ class _MyAppState extends State<MyApp> {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark(),
-        home: VoiceAssistantPage(
+        home: HomeShell(
           obstacleListener: widget.obstacleListener,
         ),
       ),

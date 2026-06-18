@@ -21,17 +21,14 @@ class NavigationService {
   // --- Geometry / timing tuning ---------------------------------------------
 
   /// Window (meters of remaining distance to the maneuver) within which the
-  /// turn imperative ("turn left now") fires. Small enough to feel "at the
-  /// turn", but large enough to be reachable given GPS sampling (~2 m) and the
-  /// fact that you round corners on a curve rather than crossing the exact
-  /// maneuver point. The maneuver is also force-completed once you pass its
-  /// polyline vertex, so a missed trigger never strands the engine.
+  /// turn instruction ("turn left") fires. Small enough to feel "at the turn",
+  /// but large enough to be reachable given GPS sampling (~2 m) and the fact
+  /// that you round corners on a curve rather than crossing the exact maneuver
+  /// point. The maneuver is also force-completed once you pass its polyline
+  /// vertex, so a missed trigger never strands the engine.
   static const double _maneuverTriggerDistance = 6.0;
 
-  /// Pre-warn distances ("in N meters, turn left"). One announcement each,
-  /// and only while genuinely approaching the maneuver.
-  static const List<int> _approachMilestones = [50, 20, 10];
-
+  /// Distance (meters) at which arrival is announced.
   static const double _arrivalThreshold = 6.0;
   static const double _offRouteThreshold = 25.0;
   static const int _offRouteFixesRequired = 3;
@@ -47,7 +44,7 @@ class NavigationService {
   /// calm and prevents the "list of instructions at once" problem. <= 5 s.
   static const Duration _announcementCooldown = Duration(seconds: 5);
 
-  /// Minimum forward movement before a "keep going" style update is allowed.
+  /// Minimum forward movement before a "continue straight" update is allowed.
   static const double _minMovementForUpdate = 6.0;
 
   /// How long the periodic re-check ticks. Each tick still respects the
@@ -55,9 +52,10 @@ class NavigationService {
   /// we speak.
   static const Duration _tickInterval = Duration(seconds: 4);
 
-  /// Heading delta thresholds (degrees). Alignment correction only fires when
-  /// the user is meaningfully and stably off-course.
-  static const double _alignmentDeadzoneDeg = 35.0;
+  /// Heading delta (degrees) beyond which an orientation correction fires.
+  /// Matches the "still straight" threshold so a user on the correct path is
+  /// never told to turn.
+  static const double _alignmentDeadzoneDeg = kStraightThresholdDeg;
 
   /// Snapped-distance noise floor: ignore tiny lateral offsets from the path.
   static const double _alignmentMinOffRouteMeters = 6.0;
@@ -91,7 +89,6 @@ class NavigationService {
   double? _gpsHeading;
   final HeadingFilter _headingFilter = HeadingFilter();
 
-  final Set<int> _milestonesAnnounced = <int>{};
   DateTime _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
   String _lastEmitText = '';
   Position? _lastProgressPosition;
@@ -152,7 +149,6 @@ class NavigationService {
     _currentSegmentIndex = 0;
     _isNavigating = false;
     _isReady = false;
-    _milestonesAnnounced.clear();
     _consecutiveOffRouteFixes = 0;
     _lastProgressPosition = null;
     _currentPosition = position;
@@ -177,7 +173,6 @@ class NavigationService {
     _isReady = false;
     _currentStepIndex = 0;
     _currentSegmentIndex = 0;
-    _milestonesAnnounced.clear();
     _consecutiveOffRouteFixes = 0;
     _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
     _lastEmitText = '';
@@ -208,7 +203,6 @@ class NavigationService {
     _currentDestination = null;
     _currentStepIndex = 0;
     _currentSegmentIndex = 0;
-    _milestonesAnnounced.clear();
     _consecutiveOffRouteFixes = 0;
     _lastProgressPosition = null;
     _snapshot = NavigationSnapshot.idle;
@@ -312,8 +306,14 @@ class NavigationService {
     // not the straight-line bearing to the maneuver node.
     final delta = angleDelta(heading, projection.segmentBearing);
     final phrase = initialDirectionPhrase(delta);
-    _emit('$phrase. About ${dist.toInt()} meters to the first turn.',
-        critical: true);
+    if (phrase.startsWith('Turn')) {
+      // Needs to reorient before walking — an orientation instruction, no
+      // distance attached.
+      _emit('$phrase.', critical: true);
+    } else {
+      // Already facing the right way — a "continue" instruction, with distance.
+      _emit('$phrase for ${dist.toInt()} meters.', critical: true);
+    }
   }
 
   // --- Guidance: location-driven --------------------------------------------
@@ -389,11 +389,17 @@ class NavigationService {
     // Fire the turn when within the (reachable) trigger window OR right as we
     // cross the maneuver vertex. Either way we advance to the next step so it
     // can never re-fire or get stuck.
+    //
+    // Turns carry NO distance: the instruction is spoken at the moment the
+    // user reaches the turn point. Slight deviations collapse to "continue
+    // straight ahead" (see helpers) and are not spoken as a turn here — going
+    // straight is covered by the periodic progress updates instead.
     if (distToNext <= _maneuverTriggerDistance || passedManeuver) {
       final phrase = _maneuverPhrase(next);
-      _emit('$phrase now.', critical: true);
+      if (isTurnInstruction(phrase)) {
+        _emit('${capitalizeFirst(phrase)}.', critical: true);
+      }
       _currentStepIndex++;
-      _milestonesAnnounced.clear();
       _lastProgressPosition = position;
       return;
     }
@@ -402,14 +408,14 @@ class NavigationService {
     // Pre-announcements: "in N meters, turn left." One per milestone, only
     // when actually approaching. These are framed as advance notice, NOT as
     // an instruction to turn immediately.
-    for (final ms in _approachMilestones) {
-      if (!_milestonesAnnounced.contains(ms) && distToNext <= ms.toDouble()) {
-        final phrase = _maneuverPhrase(next);
-        _emit('In $ms meters, $phrase.');
-        _milestonesAnnounced.add(ms);
-        break;
-      }
-    }
+    // for (final ms in _approachMilestones) {
+    //   if (!_milestonesAnnounced.contains(ms) && distToNext <= ms.toDouble()) {
+    //     final phrase = _maneuverPhrase(next);
+    //     _emit('In $ms meters, $phrase.');
+    //     _milestonesAnnounced.add(ms);
+    //     break;
+    //   }
+    // }
   }
 
   /// Distance in meters from the user's projected position to a target
@@ -490,16 +496,22 @@ class NavigationService {
     _lastProgressPosition = _currentPosition;
 
     final steps = _currentRoute!.instructions;
+    final coords = _currentRoute!.coordinates;
     if (_currentStepIndex >= steps.length - 1) {
       final destDist = _distanceToDestination();
       if (destDist == null) return;
-      _emit('Continue straight. ${destDist.toInt()} meters to destination.');
+      _emit('Continue straight ahead for ${destDist.toInt()} meters '
+          'to your destination.');
       return;
     }
 
     final next = steps[_currentStepIndex + 1];
-    final dist = _haversineToPoint(_currentPosition!, next.lat, next.lng);
-    _emit('Keep walking. ${dist.toInt()} meters to the next turn.');
+    final maneuverVertex = next.polylineIndex;
+    final dist = maneuverVertex >= 0
+        ? _distanceAlongRoute(
+            coords, _currentSegmentIndex, maneuverVertex, _currentPosition!)
+        : _haversineToPoint(_currentPosition!, next.lat, next.lng);
+    _emit('Continue straight ahead for ${dist.toInt()} meters.');
   }
 
   /// Returns an alignment correction phrase, or null when on-course.
@@ -604,7 +616,6 @@ class NavigationService {
       _currentRoute = newRoute;
       _currentStepIndex = 0;
       _currentSegmentIndex = 0;
-      _milestonesAnnounced.clear();
       _lastProgressPosition = null;
       _publishSnapshot();
 

@@ -231,50 +231,41 @@ double _haversineMeters(
   return r * c;
 }
 
+/// Threshold (degrees) below which a heading deviation is treated as "on the
+/// path" — i.e. the user is still going straight. Slight deviations are NOT
+/// announced as turns because the user is already walking the correct path.
+const double kStraightThresholdDeg = 45.0;
+
+/// Threshold (degrees) above which a turn is a reversal ("turn around").
+const double kUTurnThresholdDeg = 150.0;
+
 String describeTurn(double delta) {
   final abs = delta.abs();
-  if (abs < 20) return 'continue straight';
-  if (abs < 60) {
-    return delta > 0 ? 'turn slightly right' : 'turn slightly left';
-  }
-  if (abs < 135) {
+  if (abs < kStraightThresholdDeg) return 'continue straight ahead';
+  if (abs < kUTurnThresholdDeg) {
     return delta > 0 ? 'turn right' : 'turn left';
-  }
-  if (abs < 160) {
-    return delta > 0 ? 'turn sharply right' : 'turn sharply left';
   }
   return 'turn around';
 }
 
 String? describeAlignmentCorrection(double delta) {
   final abs = delta.abs();
-  if (abs < 25) return null;
-  if (abs < 60) {
-    return delta > 0 ? 'adjust slightly right' : 'adjust slightly left';
-  }
-  if (abs < 135) {
-    return delta > 0 ? 'turn right to face the path' : 'turn left to face the path';
+  if (abs < kStraightThresholdDeg) return null;
+  if (abs < kUTurnThresholdDeg) {
+    return delta > 0
+        ? 'turn right to face the path'
+        : 'turn left to face the path';
   }
   return 'turn around to face the path';
 }
 
 String initialDirectionPhrase(double delta) {
   final abs = delta.abs();
-  if (abs < 20) return 'Walk straight forward';
-  if (abs < 60) {
-    return delta > 0
-        ? 'Turn slightly right and walk forward'
-        : 'Turn slightly left and walk forward';
-  }
-  if (abs < 135) {
+  if (abs < kStraightThresholdDeg) return 'Walk straight ahead';
+  if (abs < kUTurnThresholdDeg) {
     return delta > 0
         ? 'Turn right and walk forward'
         : 'Turn left and walk forward';
-  }
-  if (abs < 160) {
-    return delta > 0
-        ? 'Turn sharply right and walk forward'
-        : 'Turn sharply left and walk forward';
   }
   return 'Turn around and walk forward';
 }
@@ -282,19 +273,16 @@ String initialDirectionPhrase(double delta) {
 String modifierToPhrase(String? modifier, {String fallbackType = ''}) {
   switch (modifier) {
     case 'left':
+    case 'sharp left':
       return 'turn left';
     case 'right':
+    case 'sharp right':
       return 'turn right';
     case 'slight left':
-      return 'turn slightly left';
     case 'slight right':
-      return 'turn slightly right';
-    case 'sharp left':
-      return 'turn sharply left';
-    case 'sharp right':
-      return 'turn sharply right';
     case 'straight':
-      return 'continue straight';
+      // On a correct path, slight deviations are not announced as turns.
+      return 'continue straight ahead';
     case 'uturn':
       return 'turn around';
   }
@@ -304,13 +292,14 @@ String modifierToPhrase(String? modifier, {String fallbackType = ''}) {
     case 'depart':
       return 'begin walking';
     case 'continue':
-      return 'continue straight';
-    case 'turn':
-      return 'turn';
+      return 'continue straight ahead';
     default:
-      return 'continue';
+      return 'continue straight ahead';
   }
 }
+
+/// Whether a phrase is an actual turn instruction (vs. going straight).
+bool isTurnInstruction(String phrase) => phrase.startsWith('turn');
 
 String capitalizeFirst(String s) {
   if (s.isEmpty) return s;

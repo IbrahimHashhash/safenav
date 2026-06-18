@@ -61,14 +61,64 @@ void main() {
     });
   });
 
+  group('turn phrasing (no slight/sharp tiers)', () {
+    test('small deviation stays straight, never "slightly"', () {
+      expect(describeTurn(10), 'continue straight ahead');
+      expect(describeTurn(30), 'continue straight ahead');
+      expect(describeTurn(-30), 'continue straight ahead');
+    });
+
+    test('genuine turn is a plain left/right', () {
+      expect(describeTurn(90), 'turn right');
+      expect(describeTurn(-90), 'turn left');
+    });
+
+    test('reversal is turn around', () {
+      expect(describeTurn(170), 'turn around');
+    });
+
+    test('no phrase ever contains "slight" or "sharp"', () {
+      for (var d = -180; d <= 180; d += 5) {
+        final p = describeTurn(d.toDouble());
+        expect(p.contains('slight'), isFalse, reason: 'delta=$d -> $p');
+        expect(p.contains('sharp'), isFalse, reason: 'delta=$d -> $p');
+      }
+    });
+
+    test('modifier mapping collapses slight to straight, sharp to turn', () {
+      expect(modifierToPhrase('slight left'), 'continue straight ahead');
+      expect(modifierToPhrase('slight right'), 'continue straight ahead');
+      expect(modifierToPhrase('sharp left'), 'turn left');
+      expect(modifierToPhrase('sharp right'), 'turn right');
+      expect(modifierToPhrase('left'), 'turn left');
+      expect(modifierToPhrase('right'), 'turn right');
+    });
+
+    test('isTurnInstruction distinguishes turns from going straight', () {
+      expect(isTurnInstruction('turn left'), isTrue);
+      expect(isTurnInstruction('turn around'), isTrue);
+      expect(isTurnInstruction('continue straight ahead'), isFalse);
+    });
+  });
+
   group('alignment phrasing', () {
     test('no correction inside the deadzone', () {
       expect(describeAlignmentCorrection(10), isNull);
+      expect(describeAlignmentCorrection(30), isNull);
     });
 
     test('large delta produces a turn-to-face-path instruction', () {
-      expect(describeAlignmentCorrection(90), contains('right'));
-      expect(describeAlignmentCorrection(-90), contains('left'));
+      expect(describeAlignmentCorrection(90), 'turn right to face the path');
+      expect(describeAlignmentCorrection(-90), 'turn left to face the path');
+    });
+
+    test('correction never contains "slight"', () {
+      for (var d = -180; d <= 180; d += 5) {
+        final p = describeAlignmentCorrection(d.toDouble());
+        if (p != null) {
+          expect(p.contains('slight'), isFalse, reason: 'delta=$d -> $p');
+        }
+      }
     });
   });
 }

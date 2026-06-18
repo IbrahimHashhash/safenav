@@ -20,9 +20,13 @@ import 'navigation_helpers.dart';
 class NavigationService {
   // --- Geometry / timing tuning ---------------------------------------------
 
-  /// Distance at which the actual turn imperative ("turn left now") fires.
-  /// Requested to be issued essentially at the turn (< 1 m).
-  static const double _maneuverTriggerDistance = 1.0;
+  /// Window (meters of remaining distance to the maneuver) within which the
+  /// turn imperative ("turn left now") fires. Small enough to feel "at the
+  /// turn", but large enough to be reachable given GPS sampling (~2 m) and the
+  /// fact that you round corners on a curve rather than crossing the exact
+  /// maneuver point. The maneuver is also force-completed once you pass its
+  /// polyline vertex, so a missed trigger never strands the engine.
+  static const double _maneuverTriggerDistance = 6.0;
 
   /// Pre-warn distances ("in N meters, turn left"). One announcement each,
   /// and only while genuinely approaching the maneuver.
@@ -69,6 +73,10 @@ class NavigationService {
   RouteEntity? _currentRoute;
   Location? _currentDestination;
   int _currentStepIndex = 0;
+
+  /// Index of the polyline segment the user is currently on, from projecting
+  /// the live GPS position onto the route. Drives robust step progression.
+  int _currentSegmentIndex = 0;
   bool _isNavigating = false;
   bool _isReady = false;
   bool _isRerouting = false;
@@ -141,6 +149,7 @@ class NavigationService {
     _currentRoute = route.Edit(instructions: cleanedInstructions);
     _currentDestination = destination;
     _currentStepIndex = 0;
+    _currentSegmentIndex = 0;
     _isNavigating = false;
     _isReady = false;
     _milestonesAnnounced.clear();
@@ -167,6 +176,7 @@ class NavigationService {
     _isNavigating = true;
     _isReady = false;
     _currentStepIndex = 0;
+    _currentSegmentIndex = 0;
     _milestonesAnnounced.clear();
     _consecutiveOffRouteFixes = 0;
     _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -197,6 +207,7 @@ class NavigationService {
     _currentRoute = null;
     _currentDestination = null;
     _currentStepIndex = 0;
+    _currentSegmentIndex = 0;
     _milestonesAnnounced.clear();
     _consecutiveOffRouteFixes = 0;
     _lastProgressPosition = null;
@@ -332,6 +343,22 @@ class NavigationService {
     }
 
     final steps = _currentRoute!.instructions;
+    final coords = _currentRoute!.coordinates;
+
+    // Track where we are along the route by projecting onto the polyline.
+    // This is what makes turn detection robust: we no longer require the GPS
+    // to land on the exact maneuver point.
+    final projection = projectOntoPolyline(
+      position.latitude,
+      position.longitude,
+      coords,
+    );
+    if (projection != null) {
+      // Only ever move forward along the route.
+      if (projection.segmentIndex > _currentSegmentIndex) {
+        _currentSegmentIndex = projection.segmentIndex;
+      }
+    }
 
     // Reached the final step: only arrival remains.
     if (_currentStepIndex >= steps.length - 1) {
@@ -344,10 +371,25 @@ class NavigationService {
     }
 
     final next = steps[_currentStepIndex + 1];
-    final distToNext = _haversineToPoint(position, next.lat, next.lng);
+    final maneuverVertex = next.polylineIndex;
 
-    // The actual turn: fire the imperative essentially at the maneuver point.
-    if (distToNext <= _maneuverTriggerDistance) {
+    // Remaining distance to the maneuver measured ALONG the route polyline
+    // (not straight-line), so it stays accurate around curves.
+    final distToNext = maneuverVertex >= 0
+        ? _distanceAlongRoute(coords, _currentSegmentIndex, maneuverVertex,
+            position)
+        : _haversineToPoint(position, next.lat, next.lng);
+
+    // Has the user passed the maneuver vertex? If so, complete this step even
+    // if the imperative window was somehow skipped. This prevents the engine
+    // from getting stuck announcing "walk ahead" past a turn it never fired.
+    final passedManeuver =
+        maneuverVertex >= 0 && _currentSegmentIndex >= maneuverVertex;
+
+    // Fire the turn when within the (reachable) trigger window OR right as we
+    // cross the maneuver vertex. Either way we advance to the next step so it
+    // can never re-fire or get stuck.
+    if (distToNext <= _maneuverTriggerDistance || passedManeuver) {
       final phrase = _maneuverPhrase(next);
       _emit('$phrase now.', critical: true);
       _currentStepIndex++;
@@ -368,6 +410,42 @@ class NavigationService {
         break;
       }
     }
+  }
+
+  /// Distance in meters from the user's projected position to a target
+  /// polyline vertex, summed along the route segments. Falls back gracefully
+  /// when indices are out of range.
+  double _distanceAlongRoute(
+    List<List<double>> coords,
+    int fromSegment,
+    int toVertex,
+    Position position,
+  ) {
+    if (coords.length < 2 || toVertex <= 0) {
+      return _haversineToPoint(
+          position, coords.isNotEmpty ? coords.last[0] : position.latitude,
+          coords.isNotEmpty ? coords.last[1] : position.longitude);
+    }
+
+    // Distance from the user to the end of their current segment.
+    final segEnd = (fromSegment + 1).clamp(0, coords.length - 1);
+    double total = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      coords[segEnd][0],
+      coords[segEnd][1],
+    );
+
+    // Plus the length of each subsequent segment up to the maneuver vertex.
+    for (int i = segEnd; i < toVertex && i < coords.length - 1; i++) {
+      total += Geolocator.distanceBetween(
+        coords[i][0],
+        coords[i][1],
+        coords[i + 1][0],
+        coords[i + 1][1],
+      );
+    }
+    return total;
   }
 
   // --- Guidance: periodic re-check (alignment + progress) -------------------
@@ -525,6 +603,7 @@ class NavigationService {
       );
       _currentRoute = newRoute;
       _currentStepIndex = 0;
+      _currentSegmentIndex = 0;
       _milestonesAnnounced.clear();
       _lastProgressPosition = null;
       _publishSnapshot();

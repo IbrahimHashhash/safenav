@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../../../../core/di/injection.dart';
 import '../../../mapbox_navigation/presentation/cubit/navigation_map_cubit.dart';
@@ -33,7 +34,12 @@ class _VoiceAssistantPageState extends State<VoiceAssistantPage> {
         body: Column(
           children: [
             // Live navigation map with route and orientation arrow.
-            const Expanded(flex: 3, child: NavigationMapView()),
+            Expanded(
+              flex: 3,
+              child: NavigationMapView(
+                mapboxToken: dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? '',
+              ),
+            ),
             // Voice interaction surface (tap to talk / cancel / stop).
             Expanded(
               flex: 2,

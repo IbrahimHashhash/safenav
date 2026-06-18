@@ -191,6 +191,28 @@ PolylineProjection? projectOntoPolyline(
   );
 }
 
+/// Returns the index of the polyline vertex closest to the given point.
+/// Used to anchor each maneuver to a position along the route so that progress
+/// can be tracked by polyline position rather than by an exact GPS hit.
+int nearestVertexIndex(
+  double lat,
+  double lng,
+  List<List<double>> coords,
+) {
+  int bestIdx = 0;
+  double bestSq = double.infinity;
+  for (int i = 0; i < coords.length; i++) {
+    final dLat = coords[i][0] - lat;
+    final dLng = coords[i][1] - lng;
+    final sq = dLat * dLat + dLng * dLng;
+    if (sq < bestSq) {
+      bestSq = sq;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 double _haversineMeters(
   double lat1,
   double lng1,

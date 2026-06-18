@@ -7,11 +7,24 @@ import '../../domain/entities/navigation_snapshot.dart';
 import '../cubit/navigation_map_cubit.dart';
 import 'orientation_arrow.dart';
 
-/// Live navigation map: OpenStreetMap tiles, the active route polyline, the
+/// Live navigation map: Mapbox tiles, the active route polyline, the
 /// destination pin, and a Google-Maps-style orientation arrow that follows the
 /// user. The camera recenters on the user as they move.
+///
+/// Falls back to OpenStreetMap tiles when [mapboxToken] is empty so the map
+/// still renders if the token is missing.
 class NavigationMapView extends StatefulWidget {
-  const NavigationMapView({super.key});
+  const NavigationMapView({
+    super.key,
+    this.mapboxToken = '',
+    this.mapboxStyle = 'mapbox/streets-v12',
+  });
+
+  /// Mapbox access token. When empty, OpenStreetMap tiles are used.
+  final String mapboxToken;
+
+  /// Mapbox style id, e.g. `mapbox/streets-v12` or `mapbox/navigation-day-v1`.
+  final String mapboxStyle;
 
   @override
   State<NavigationMapView> createState() => _NavigationMapViewState();
@@ -23,6 +36,21 @@ class _NavigationMapViewState extends State<NavigationMapView> {
   bool _mapReady = false;
 
   static const LatLng _campusCenter = LatLng(31.9601, 35.1824);
+
+  bool get _useMapbox => widget.mapboxToken.isNotEmpty;
+
+  /// Mapbox raster tiles API. `@2x` requests retina tiles (256 -> 512px).
+  String get _tileUrl => _useMapbox
+      ? 'https://api.mapbox.com/styles/v1/{styleId}/tiles/256/{z}/{x}/{y}@2x'
+          '?access_token={accessToken}'
+      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+  Map<String, String> get _tileTemplateValues => _useMapbox
+      ? {
+          'styleId': widget.mapboxStyle,
+          'accessToken': widget.mapboxToken,
+        }
+      : const {};
 
   @override
   void dispose() {
@@ -74,8 +102,8 @@ class _NavigationMapViewState extends State<NavigationMapView> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: _tileUrl,
+                  additionalOptions: _tileTemplateValues,
                   userAgentPackageName: 'com.safenav.app',
                   maxZoom: 20,
                 ),

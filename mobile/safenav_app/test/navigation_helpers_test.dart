@@ -42,6 +42,25 @@ void main() {
     });
   });
 
+  group('nearestVertexIndex', () {
+    final coords = <List<double>>[
+      [31.9600, 35.1820],
+      [31.9600, 35.1830],
+      [31.9610, 35.1830],
+    ];
+
+    test('anchors a maneuver to the closest polyline vertex', () {
+      // The right turn happens at the corner vertex (index 1).
+      final idx = nearestVertexIndex(31.96001, 35.18299, coords);
+      expect(idx, 1);
+    });
+
+    test('start maps to first vertex, end to last', () {
+      expect(nearestVertexIndex(31.9600, 35.1820, coords), 0);
+      expect(nearestVertexIndex(31.9610, 35.1830, coords), 2);
+    });
+  });
+
   group('alignment phrasing', () {
     test('no correction inside the deadzone', () {
       expect(describeAlignmentCorrection(10), isNull);

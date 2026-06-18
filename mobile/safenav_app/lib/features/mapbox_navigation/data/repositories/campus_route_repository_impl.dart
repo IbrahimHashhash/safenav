@@ -2,6 +2,7 @@ import '../../domain/entities/route_entity.dart';
 import '../../domain/repositories/route_repository.dart';
 import '../data_sources/mapbox_datasource.dart';
 import '../../domain/entities/turn_by_turn_step.dart';
+import '../../application/navigation_helpers.dart';
 
 class CampusRouteRepositoryImpl implements RouteRepository {
   final MapboxDataSource dataSource;
@@ -44,6 +45,21 @@ class CampusRouteRepositoryImpl implements RouteRepository {
         .map((e) => TurnByTurnStep.fromJson(e))
         .toList();
 
+    _assignPolylineIndices(steps, coords);
+
     return RouteEntity(coordinates: coords, instructions: steps);
+  }
+
+  /// Maps each maneuver to the index of the closest polyline vertex. This lets
+  /// the navigation engine track progress by polyline position rather than by
+  /// requiring the GPS to land exactly on a maneuver point.
+  void _assignPolylineIndices(
+    List<TurnByTurnStep> steps,
+    List<List<double>> coords,
+  ) {
+    if (coords.isEmpty) return;
+    for (final step in steps) {
+      step.polylineIndex = nearestVertexIndex(step.lat, step.lng, coords);
+    }
   }
 }

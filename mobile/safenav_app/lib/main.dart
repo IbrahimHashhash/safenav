@@ -3,7 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'core/di/injection.dart';
 
-import 'features/obstacle_avoidance/data/datasources/obstacle_sse_datasource.dart';
+import 'core/services/camera/camera_frame_source.dart';
+import 'features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
 import 'features/obstacle_avoidance/application/obstacle_listener_service.dart';
 import 'features/voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import 'features/voice_interaction/presentation/pages/voice_assistant_page.dart';
@@ -16,7 +17,8 @@ void main() async {
   final voiceCubit = VoiceAssistantCubit(sl());
 
   final obstacleListener = ObstacleListenerService(
-    datasource: sl<ObstacleSseDatasource>(),
+    datasource: sl<NavigationWebSocketDatasource>(),
+    cameraSource: sl<CameraFrameSource>(),
     voiceCubit: voiceCubit,
   );
 
@@ -38,6 +40,17 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Start obstacle detection once the first frame is rendered, so camera /
+    // server failures never block app startup. Errors inside start() are
+    // handled internally (it simply stops if the camera or server is absent).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.obstacleListener.start();
+    });
+  }
+
   @override
   void dispose() {
     widget.obstacleListener.stop();

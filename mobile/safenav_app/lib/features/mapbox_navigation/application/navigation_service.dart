@@ -34,11 +34,6 @@ class NavigationService {
   static const int _offRouteFixesRequired = 3;
 
   static const Duration _readyDelay = Duration(seconds: 3);
-  static const Duration _periodicInterval = Duration(seconds: 18);
-  static const Duration _minBetweenAnnouncements = Duration(seconds: 3);
-  static const Duration _alignmentCooldown = Duration(seconds: 8);
-  static const double _periodicMinMovement = 4.0;
-  static const List<int> _milestones = [100, 50, 20];
 
   /// Global cooldown between *any* two spoken instructions. Keeps guidance
   /// calm and prevents the "list of instructions at once" problem. <= 5 s.
@@ -78,7 +73,6 @@ class NavigationService {
   bool _isNavigating = false;
   bool _isReady = false;
   bool _isRerouting = false;
-  bool _isSpeaking = false;
 
   StreamSubscription<Position>? _locationSub;
   StreamSubscription<double?>? _compassSub;
@@ -680,10 +674,6 @@ class NavigationService {
     _snapshot = _snapshot.copyWith(lastInstruction: text);
     _publishSnapshot();
     _onInstruction(text);
-
-    Future.delayed(const Duration(seconds: 2), () {
-      _isSpeaking = false;
-    });
   }
 
   void _publishSnapshot() {

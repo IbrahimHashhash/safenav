@@ -159,6 +159,24 @@ void main() {
           [true, false, true, false, true]);
     });
 
+    test('parses the region-keyed map (server format) in left-to-right order',
+        () {
+      final z = parseFreeZones({
+        'left': {'clear': false, 'clearance_m': 0.86},
+        'slight_left': {'clear': true, 'clearance_m': 3.65},
+        'centre': {'clear': true, 'clearance_m': 4.66},
+        'slight_right': {'clear': true, 'clearance_m': 4.47},
+        'right': {'clear': true, 'clearance_m': 3.87},
+      });
+      expect(z.length, 5);
+      expect(z.map((e) => e.free).toList(),
+          [false, true, true, true, true]);
+      expect(z.map((e) => e.label).toList(),
+          ['Left', 'Slight left', 'Centre', 'Slight right', 'Right']);
+      expect(z[0].clearanceM, closeTo(0.86, 1e-9));
+      expect(z[2].clearanceM, closeTo(4.66, 1e-9));
+    });
+
     test('parses clearance_m per region', () {
       final z = parseFreeZones([
         {'free': true, 'clearance_m': 3.5},

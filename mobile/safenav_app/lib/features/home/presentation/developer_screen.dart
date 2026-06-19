@@ -542,11 +542,19 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       ),
       clipBehavior: Clip.hardEdge,
       child: zones.isEmpty
-          ? const Center(
-              child: Text(
-                'No free-zone data yet. Capture a frame or start streaming.',
-                style: TextStyle(color: Colors.white70),
-                textAlign: TextAlign.center,
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: SingleChildScrollView(
+                  child: Text(
+                    _result?.freeZonesRaw != null
+                        ? "Couldn't parse free_zones. Raw value from server:\n\n"
+                            '${_result!.freeZonesRaw}'
+                        : 'No free-zone data yet. Capture a frame or start streaming.',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               ),
             )
           : Stack(
@@ -579,10 +587,12 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Text(
-                                      '${i + 1}',
-                                      style: const TextStyle(
+                                      zones[i].label ?? '${i + 1}',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 22,
+                                        fontSize:
+                                            zones[i].label != null ? 13 : 22,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -654,7 +664,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       child: Column(
         children: [
           Text(
-            'R${index + 1}',
+            zone.label ?? 'R${index + 1}',
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Colors.white60, fontSize: 11),
           ),
           const SizedBox(height: 4),

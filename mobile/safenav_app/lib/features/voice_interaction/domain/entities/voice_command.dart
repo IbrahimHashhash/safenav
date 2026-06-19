@@ -6,5 +6,6 @@ enum VoiceCommandType {
   startNavigation,
   stopNavigation,
   nextInstruction,
+  greeting,
   unknown,
 }

@@ -17,6 +17,7 @@ import '../../features/mapbox_navigation/presentation/cubit/navigation_map_cubit
 
 import '../services/compass/compass_service.dart';
 import '../services/compass/flutter_compass_service.dart';
+import '../services/profile/user_profile_service.dart';
 import '../services/camera/camera_frame_source.dart';
 import '../services/camera/camera_frame_source_impl.dart';
 import '../services/speech_to_text/flutter_stt_service.dart';
@@ -44,6 +45,9 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => ParseIntentUseCase());
   sl.registerLazySingleton(() => ExtractLocationUseCase());
 
+  sl.registerLazySingleton(() => UserProfileService());
+  await sl<UserProfileService>().load();
+
   sl.registerLazySingleton(
     () => MapboxDataSource(dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? ''),
   );
@@ -69,6 +73,7 @@ Future<void> initDependencies() async {
       parseIntent: sl(),
       extractLocation: sl(),
       navigationService: sl(),
+      userProfile: sl<UserProfileService>(),
     ),
   );
 

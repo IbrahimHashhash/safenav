@@ -36,6 +36,12 @@ class ParseIntentUseCase {
       return VoiceCommandType.navigate;
     }
 
+    // Greeting is checked last (before unknown) so a phrase like
+    // "hey, navigate to the library" is still treated as a navigation command.
+    if (_containsIntent(words, VoiceConstants.greetingTriggers)) {
+      return VoiceCommandType.greeting;
+    }
+
     return VoiceCommandType.unknown;
   }
 

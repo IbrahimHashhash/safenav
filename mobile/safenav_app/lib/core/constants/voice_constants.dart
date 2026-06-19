@@ -34,4 +34,9 @@ class VoiceConstants {
   static const nextInstructionTriggers = [
     'next', 'continue', 'proceed',
   ];
+
+  static const greetingTriggers = [
+    'hi', 'hello', 'hey', 'hiya', 'howdy', 'greetings', 'helo', 'hii',
+    'morning', 'afternoon', 'evening',
+  ];
 }

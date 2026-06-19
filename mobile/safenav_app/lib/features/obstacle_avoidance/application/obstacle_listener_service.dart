@@ -64,6 +64,11 @@ class ObstacleListenerService {
       StreamController<String>.broadcast();
   DetectionResult? _lastResult;
 
+  /// The most recent JPEG frame sent to the server (clean, no overlays), used
+  /// by the dev screen as the free-zone overlay background.
+  Uint8List? _lastFrameJpeg;
+  Uint8List? get lastFrameJpeg => _lastFrameJpeg;
+
   Stream<DetectionResult> get results => _resultsController.stream;
 
   /// Human-readable messages about saved captures (for snackbars).
@@ -147,6 +152,7 @@ class ObstacleListenerService {
     final id = _frameId++;
     _captureStartedAt[id] = captureStart;
     _captureBytes[id] = jpeg;
+    _lastFrameJpeg = jpeg;
     datasource.sendFrame(jpeg, id, includePreviews: _previewsEnabled);
     return null;
   }
@@ -165,6 +171,7 @@ class ObstacleListenerService {
       if (!_running) break;
 
       if (jpeg != null) {
+        _lastFrameJpeg = jpeg;
         final id = _frameId++;
         _captureStartedAt[id] = captureStart;
         if (_saveNextFrame) {

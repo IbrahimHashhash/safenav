@@ -527,8 +527,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  /// Visualises the server's free-zone analysis: the vertical regions across
-  /// the analysis band, green = free, red = blocked.
+  /// Visualises the server's free-zone analysis as translucent vertical
+  /// regions (green = free, red = blocked) overlaid on the actual frame.
   Widget _freeZoneView() {
     final zones = _result?.freeZones ?? const <FreeZone>[];
     final skipped = _result?.skipped == true;
@@ -557,79 +557,103 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 ),
               ),
             )
-          : Stack(
-              children: [
-                // The analysis band with the vertical regions.
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: SizedBox(
-                      height: 120,
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final h = constraints.maxHeight;
+                // Analysis band: regions cover most of the height, leaving the
+                // foreground/ground at the bottom uncovered (as in the server's
+                // reference rendering).
+                final bandTop = h * 0.10;
+                final bandHeight = h * 0.62;
+                return Stack(
+                  children: [
+                    Positioned.fill(child: _freeZoneBackground()),
+                    Positioned(
+                      top: bandTop,
+                      left: 0,
+                      right: 0,
+                      height: bandHeight,
                       child: Row(
                         children: [
                           for (var i = 0; i < zones.length; i++)
                             Expanded(
-                              child: Container(
-                                margin: const EdgeInsets.symmetric(
-                                    horizontal: 3),
-                                decoration: BoxDecoration(
-                                  color: zones[i].free
-                                      ? Colors.green.withValues(alpha: 0.65)
-                                      : Colors.red.withValues(alpha: 0.65),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: Colors.white.withValues(
-                                          alpha: 0.85),
-                                      width: 1.5),
-                                ),
-                                alignment: Alignment.center,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      zones[i].label ?? '${i + 1}',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize:
-                                            zones[i].label != null ? 13 : 22,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      zones[i].free ? 'free' : 'blocked',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              child: _regionCell(zones[i], i, zones.length),
                             ),
                         ],
                       ),
                     ),
-                  ),
-                ),
-                Positioned(
-                  left: 8,
-                  top: 8,
-                  child: _badge(
-                    'Free-zone analysis · ${zones.length} regions',
-                    _accent,
-                  ),
-                ),
-                if (skipped)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: _badge('Skipped · last frame', Colors.orangeAccent),
-                  ),
-              ],
+                    Positioned(
+                      left: 8,
+                      top: 8,
+                      child: _badge(
+                        'Free zones · ${zones.length} regions',
+                        _accent,
+                      ),
+                    ),
+                    if (skipped)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child:
+                            _badge('Skipped · last frame', Colors.orangeAccent),
+                      ),
+                  ],
+                );
+              },
             ),
+    );
+  }
+
+  /// Background frame for the free-zone overlay: the clean last frame if
+  /// available, else the YOLO preview, else the live camera, else nothing.
+  Widget _freeZoneBackground() {
+    final frame = widget.listener.lastFrameJpeg;
+    if (frame != null) {
+      return Image.memory(frame, fit: BoxFit.cover, gaplessPlayback: true);
+    }
+    if (_lastYolo != null) {
+      return Image.memory(_lastYolo!, fit: BoxFit.cover, gaplessPlayback: true);
+    }
+    final cam = widget.listener.cameraSource;
+    if (cam.isReady && cam.previewSize != null) {
+      return FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: cam.previewSize!.height,
+          height: cam.previewSize!.width,
+          child: cam.buildPreview(),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _regionCell(FreeZone zone, int index, int count) {
+    final color = zone.free ? Colors.green : Colors.red;
+    return Container(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.33),
+        border: Border(
+          right: index < count - 1
+              ? BorderSide(color: Colors.white.withValues(alpha: 0.45))
+              : BorderSide.none,
+        ),
+      ),
+      alignment: Alignment.bottomCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          zone.label ?? 'R${index + 1}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            shadows: [Shadow(blurRadius: 2, color: Colors.black)],
+          ),
+        ),
+      ),
     );
   }
 

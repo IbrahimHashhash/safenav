@@ -66,9 +66,12 @@ class VoiceAssistantService {
 
   Future<void> _enqueueOrDefer(SpeechRequest request) async {
     if (_isPressActive) {
-      if (request.priority == SpeechPriority.navigation) {
+      // Keep only the latest navigation/obstacle request while listening, so
+      // we don't flush a backlog of stale guidance when listening ends.
+      if (request.priority == SpeechPriority.navigation ||
+          request.priority == SpeechPriority.obstacle) {
         _deferredWhileListening
-            .removeWhere((r) => r.priority == SpeechPriority.navigation);
+            .removeWhere((r) => r.priority == request.priority);
       }
       _deferredWhileListening.add(request);
       return;

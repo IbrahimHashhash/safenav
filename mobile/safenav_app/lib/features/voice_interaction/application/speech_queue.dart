@@ -29,8 +29,13 @@ class SpeechQueue {
   bool get isActive => _currentRequest != null;
 
   Future<void> enqueue(SpeechRequest incoming) async {
-    if (incoming.priority == SpeechPriority.navigation) {
-      _queue.removeWhere((r) => r.priority == SpeechPriority.navigation);
+    // Obstacle and navigation guidance is only useful when fresh. Keep at most
+    // the newest pending request of that kind so the TTS never works through a
+    // backlog of stale instructions (e.g. warning about a chair that has since
+    // left the frame).
+    if (incoming.priority == SpeechPriority.navigation ||
+        incoming.priority == SpeechPriority.obstacle) {
+      _queue.removeWhere((r) => r.priority == incoming.priority);
     }
 
     if (_currentRequest == null) {

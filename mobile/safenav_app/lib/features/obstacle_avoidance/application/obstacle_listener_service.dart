@@ -33,12 +33,23 @@ class ObstacleListenerService {
   static final Duration _framePeriod =
       Duration(milliseconds: (1000 / _targetFps).round());
 
+  /// Safety cap: if a frame's response never arrives, stop waiting after this
+  /// so the loop can't deadlock.
+  static const Duration _responseTimeout = Duration(seconds: 2);
+
   static const Duration _repeatCooldown = Duration(seconds: 4);
 
   StreamSubscription<DetectionResult>? _subscription;
   bool _running = false;
   bool _previewsEnabled = false;
   int _frameId = 0;
+
+  // Backpressure: at most one frame is in flight at a time. The capture loop
+  // waits for the in-flight frame's response before sending the next, so the
+  // server is always working on the most recent frame and instructions never
+  // describe a scene from seconds ago.
+  int? _awaitingFrameId;
+  Completer<void>? _responseWaiter;
 
   String _lastSpoken = '';
   DateTime _lastSpokenAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -80,26 +91,36 @@ class ObstacleListenerService {
     return StreamStartResult.started;
   }
 
-  /// Captures and sends frames, paced to [_targetFps]. The wait after each
-  /// frame is reduced by however long the capture+send already took, so the
-  /// effective rate stays near the target instead of (period + capture time).
+  /// Captures and sends frames with single-frame backpressure: after sending,
+  /// it waits for that frame's response (or [_responseTimeout]) before the
+  /// next capture, and additionally paces to at most [_targetFps].
   Future<void> _captureLoop() async {
     while (_running) {
       final stopwatch = Stopwatch()..start();
 
-      if (datasource.isConnected && cameraSource.isReady) {
-        final jpeg = await cameraSource.captureJpeg();
-        if (!_running) break;
-        if (jpeg != null) {
-          datasource.sendFrame(
-            jpeg,
-            _frameId,
-            includePreviews: _previewsEnabled,
-          );
-          _frameId++;
-        }
+      if (!datasource.isConnected || !cameraSource.isReady) {
+        await Future<void>.delayed(_framePeriod);
+        continue;
       }
 
+      final jpeg = await cameraSource.captureJpeg();
+      if (!_running) break;
+
+      if (jpeg != null) {
+        final id = _frameId++;
+        final waiter = Completer<void>();
+        _awaitingFrameId = id;
+        _responseWaiter = waiter;
+
+        datasource.sendFrame(jpeg, id, includePreviews: _previewsEnabled);
+
+        // Backpressure: don't send another frame until this one is answered.
+        await waiter.future.timeout(_responseTimeout, onTimeout: () {});
+        _responseWaiter = null;
+        _awaitingFrameId = null;
+      }
+
+      // Upper-bound the rate so a fast server can't exceed the target FPS.
       final remaining =
           _framePeriod.inMilliseconds - stopwatch.elapsedMilliseconds;
       if (remaining > 0) {
@@ -113,6 +134,15 @@ class ObstacleListenerService {
     if (!_resultsController.isClosed) {
       _resultsController.add(result);
     }
+
+    // Release backpressure for the in-flight frame (>= guards against a lost
+    // intermediate response).
+    final awaiting = _awaitingFrameId;
+    if (awaiting != null && result.frameId >= awaiting) {
+      final waiter = _responseWaiter;
+      if (waiter != null && !waiter.isCompleted) waiter.complete();
+    }
+
     _maybeSpeak(result.instruction);
   }
 
@@ -133,6 +163,10 @@ class ObstacleListenerService {
 
   Future<void> _teardown() async {
     _running = false;
+    final waiter = _responseWaiter;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+    _responseWaiter = null;
+    _awaitingFrameId = null;
     await _subscription?.cancel();
     _subscription = null;
   }

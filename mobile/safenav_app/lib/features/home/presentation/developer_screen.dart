@@ -43,7 +43,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   String _lastSpoken = '';
 
   StreamSubscription<DetectionResult>? _sub;
+  StreamSubscription<String>? _captureSub;
   DetectionResult? _result;
+  bool _capturing = false;
+  String? _capturesDir;
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -63,12 +66,37 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         _cachePreviews(r);
       });
     });
+    _captureSub = widget.listener.captureEvents.listen((msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+      );
+    });
+    widget.listener.captureLog.directoryPath().then((path) {
+      if (mounted) setState(() => _capturesDir = path);
+    });
   }
 
   @override
   void dispose() {
     _sub?.cancel();
+    _captureSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _onCapture() async {
+    setState(() => _capturing = true);
+    final error = await widget.listener.captureOnce();
+    if (!mounted) return;
+    setState(() => _capturing = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error ??
+              'Capturing frame… it will be saved when the response arrives.',
+        ),
+      ),
+    );
   }
 
   void _cachePreviews(DetectionResult? r) {
@@ -99,11 +127,47 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              StreamingButton(
-                streaming: widget.streaming,
-                busy: widget.busy,
-                onPressed: widget.onToggleStreaming,
+              Row(
+                children: [
+                  Expanded(
+                    child: StreamingButton(
+                      streaming: widget.streaming,
+                      busy: widget.busy,
+                      onPressed: widget.onToggleStreaming,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    height: 54,
+                    child: ElevatedButton.icon(
+                      onPressed: _capturing ? null : _onCapture,
+                      icon: _capturing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.camera_alt),
+                      label: const Text('Capture frame'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF5C6BC0),
+                        foregroundColor: Colors.white,
+                        textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
               ),
+              if (_capturesDir != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Captures saved to: $_capturesDir',
+                    style:
+                        const TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ),
               const SizedBox(height: 16),
 
               _statusStrip(),
@@ -117,6 +181,18 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
               const SizedBox(height: 14),
 
               _section(
+                icon: Icons.record_voice_over,
+                title: 'Spoken instruction (navigation / obstacle)',
+                child: CaptionCard(
+                  label: 'Last spoken',
+                  text: _lastSpoken,
+                  icon: Icons.record_voice_over,
+                  accent: _accent,
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              _section(
                 icon: Icons.map,
                 title: 'Map & current location',
                 child: SizedBox(
@@ -125,18 +201,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                     borderRadius: BorderRadius.circular(12),
                     child: const NavigationMapView(showCoordinates: true),
                   ),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              _section(
-                icon: Icons.record_voice_over,
-                title: 'Spoken instruction (navigation / obstacle)',
-                child: CaptionCard(
-                  label: 'Last spoken',
-                  text: _lastSpoken,
-                  icon: Icons.record_voice_over,
-                  accent: _accent,
                 ),
               ),
               const SizedBox(height: 14),
@@ -526,7 +590,15 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       rows.add(_metricRow(_prettyKey(e.key), text));
     }
 
-    return Column(children: rows);
+    return Column(
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0)
+            Divider(height: 1, thickness: 1, color: Colors.white.withValues(alpha: 0.10)),
+          rows[i],
+        ],
+      ],
+    );
   }
 
   String _prettyKey(String key) {

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../../../core/services/camera/camera_frame_source.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
+import '../data/capture_log_service.dart';
 import '../data/datasources/navigation_ws_datasource.dart';
 import '../domain/entities/detection_result.dart';
 
@@ -13,30 +15,26 @@ enum StreamStartResult { started, serverUnreachable, cameraUnavailable }
 ///   camera frame -> WebSocket -> server -> JSON (+ optional previews) ->
 ///   spoken `instruction` (via the shared TTS priority queue).
 ///
-/// Also re-publishes the full [DetectionResult] stream so the developer screen
-/// can show previews, obstacles and metrics. Obstacle speech goes through
-/// [VoiceAssistantCubit.speakObstacleInstruction] (highest priority), so it
-/// preempts — and never overlaps — Mapbox navigation on the single TTS engine.
+/// Also: re-publishes the full [DetectionResult] stream (dev screen), supports
+/// single-shot captures that persist the frame + metrics, and measures
+/// end-to-end latency from frame capture to response.
 class ObstacleListenerService {
   ObstacleListenerService({
     required this.datasource,
     required this.cameraSource,
     required this.voiceCubit,
+    required this.captureLog,
   });
 
   final NavigationWebSocketDatasource datasource;
   final CameraFrameSource cameraSource;
   final VoiceAssistantCubit voiceCubit;
+  final CaptureLogService captureLog;
 
-  /// Target streaming rate. The capture loop paces itself to this period.
   static const int _targetFps = 3;
   static final Duration _framePeriod =
       Duration(milliseconds: (1000 / _targetFps).round());
-
-  /// Safety cap: if a frame's response never arrives, stop waiting after this
-  /// so the loop can't deadlock.
   static const Duration _responseTimeout = Duration(seconds: 2);
-
   static const Duration _repeatCooldown = Duration(seconds: 4);
 
   StreamSubscription<DetectionResult>? _subscription;
@@ -44,21 +42,33 @@ class ObstacleListenerService {
   bool _previewsEnabled = false;
   int _frameId = 0;
 
-  // Backpressure: at most one frame is in flight at a time. The capture loop
-  // waits for the in-flight frame's response before sending the next, so the
-  // server is always working on the most recent frame and instructions never
-  // describe a scene from seconds ago.
+  // Backpressure: at most one streamed frame in flight at a time.
   int? _awaitingFrameId;
   Completer<void>? _responseWaiter;
+
+  // Capture-to-response latency: frame capture start time, keyed by frame id.
+  final Map<int, DateTime> _captureStartedAt = {};
+
+  // Frames whose JPEG must be persisted when their response arrives.
+  final Map<int, Uint8List> _captureBytes = {};
+
+  // When streaming, persist the very next streamed frame on a capture request.
+  bool _saveNextFrame = false;
 
   String _lastSpoken = '';
   DateTime _lastSpokenAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   final StreamController<DetectionResult> _resultsController =
       StreamController<DetectionResult>.broadcast();
+  final StreamController<String> _captureEventsController =
+      StreamController<String>.broadcast();
   DetectionResult? _lastResult;
 
   Stream<DetectionResult> get results => _resultsController.stream;
+
+  /// Human-readable messages about saved captures (for snackbars).
+  Stream<String> get captureEvents => _captureEventsController.stream;
+
   DetectionResult? get lastResult => _lastResult;
 
   bool get isStreaming => _running;
@@ -66,34 +76,81 @@ class ObstacleListenerService {
 
   void setPreviewsEnabled(bool enabled) => _previewsEnabled = enabled;
 
-  /// Starts streaming camera frames. Returns a [StreamStartResult] describing
-  /// success or the specific failure (server vs camera).
+  void _ensureSubscribed() {
+    _subscription ??= datasource.stream.listen(_onResult);
+  }
+
+  /// Connect + initialise camera. Returns the specific failure, if any.
+  Future<StreamStartResult> _ensureReady() async {
+    _ensureSubscribed();
+    if (!datasource.isConnected) {
+      if (!await datasource.connect()) {
+        return StreamStartResult.serverUnreachable;
+      }
+    }
+    if (!cameraSource.isReady) {
+      if (!await cameraSource.initialize()) {
+        return StreamStartResult.cameraUnavailable;
+      }
+    }
+    return StreamStartResult.started;
+  }
+
+  Future<void> _cleanupIfIdle() async {
+    if (_running) return;
+    await _subscription?.cancel();
+    _subscription = null;
+    await datasource.disconnect();
+  }
+
+  /// Starts continuous streaming. Returns success or the specific failure.
   Future<StreamStartResult> start() async {
     if (_running) return StreamStartResult.started;
+
+    final ready = await _ensureReady();
+    if (ready != StreamStartResult.started) {
+      await _cleanupIfIdle();
+      return ready;
+    }
+
     _running = true;
-
-    _subscription = datasource.stream.listen(_onResult);
-
-    final connected = await datasource.connect();
-    if (!connected) {
-      await _teardown();
-      return StreamStartResult.serverUnreachable;
-    }
-
-    final cameraReady = await cameraSource.initialize();
-    if (!cameraReady) {
-      await _teardown();
-      await datasource.disconnect();
-      return StreamStartResult.cameraUnavailable;
-    }
-
     unawaited(_captureLoop());
     return StreamStartResult.started;
   }
 
-  /// Captures and sends frames with single-frame backpressure: after sending,
-  /// it waits for that frame's response (or [_responseTimeout]) before the
-  /// next capture, and additionally paces to at most [_targetFps].
+  /// Captures a single frame, sends it to the server, and persists it (frame +
+  /// metrics) when the response arrives. Works whether or not streaming is on.
+  /// Returns null on success, or an error message.
+  Future<String?> captureOnce() async {
+    if (_running) {
+      // Already streaming: persist the next streamed frame.
+      _saveNextFrame = true;
+      return null;
+    }
+
+    final ready = await _ensureReady();
+    if (ready == StreamStartResult.serverUnreachable) {
+      await _cleanupIfIdle();
+      return 'Cannot reach the detection server at $serverUrl.';
+    }
+    if (ready == StreamStartResult.cameraUnavailable) {
+      await _cleanupIfIdle();
+      return 'Camera unavailable. Grant the camera permission and try again.';
+    }
+
+    final captureStart = DateTime.now();
+    final jpeg = await cameraSource.captureJpeg();
+    if (jpeg == null) {
+      return 'Camera is busy. Try again in a moment.';
+    }
+
+    final id = _frameId++;
+    _captureStartedAt[id] = captureStart;
+    _captureBytes[id] = jpeg;
+    datasource.sendFrame(jpeg, id, includePreviews: _previewsEnabled);
+    return null;
+  }
+
   Future<void> _captureLoop() async {
     while (_running) {
       final stopwatch = Stopwatch()..start();
@@ -103,24 +160,29 @@ class ObstacleListenerService {
         continue;
       }
 
+      final captureStart = DateTime.now();
       final jpeg = await cameraSource.captureJpeg();
       if (!_running) break;
 
       if (jpeg != null) {
         final id = _frameId++;
+        _captureStartedAt[id] = captureStart;
+        if (_saveNextFrame) {
+          _captureBytes[id] = jpeg;
+          _saveNextFrame = false;
+        }
+
         final waiter = Completer<void>();
         _awaitingFrameId = id;
         _responseWaiter = waiter;
 
         datasource.sendFrame(jpeg, id, includePreviews: _previewsEnabled);
 
-        // Backpressure: don't send another frame until this one is answered.
         await waiter.future.timeout(_responseTimeout, onTimeout: () {});
         _responseWaiter = null;
         _awaitingFrameId = null;
       }
 
-      // Upper-bound the rate so a fast server can't exceed the target FPS.
       final remaining =
           _framePeriod.inMilliseconds - stopwatch.elapsedMilliseconds;
       if (remaining > 0) {
@@ -131,12 +193,29 @@ class ObstacleListenerService {
 
   void _onResult(DetectionResult result) {
     _lastResult = result;
+
+    // End-to-end latency measured from frame CAPTURE to response.
+    final captureStart = _captureStartedAt.remove(result.frameId);
+    if (captureStart != null) {
+      result.endToEndMs =
+          DateTime.now().difference(captureStart).inMicroseconds / 1000.0;
+    }
+    // Guard against leaks if some responses are lost.
+    if (_captureStartedAt.length > 60) {
+      final cutoff = result.frameId - 30;
+      _captureStartedAt.removeWhere((id, _) => id < cutoff);
+    }
+
+    // Persist this frame if it was a capture request.
+    final bytes = _captureBytes.remove(result.frameId);
+    if (bytes != null) {
+      unawaited(_saveCapture(bytes, result));
+    }
+
     if (!_resultsController.isClosed) {
       _resultsController.add(result);
     }
 
-    // Release backpressure for the in-flight frame (>= guards against a lost
-    // intermediate response).
     final awaiting = _awaitingFrameId;
     if (awaiting != null && result.frameId >= awaiting) {
       final waiter = _responseWaiter;
@@ -144,6 +223,26 @@ class ObstacleListenerService {
     }
 
     _maybeSpeak(result.instruction);
+  }
+
+  Future<void> _saveCapture(Uint8List jpeg, DetectionResult result) async {
+    try {
+      final record = await captureLog.save(
+        frameJpeg: jpeg,
+        result: result,
+        capturedAt: DateTime.now(),
+      );
+      _emitCaptureEvent('Saved frame #${record.frameId} '
+          '(${record.imageFileName})');
+    } catch (e) {
+      _emitCaptureEvent('Failed to save capture: $e');
+    }
+  }
+
+  void _emitCaptureEvent(String message) {
+    if (!_captureEventsController.isClosed) {
+      _captureEventsController.add(message);
+    }
   }
 
   void _maybeSpeak(String instruction) {
@@ -167,6 +266,7 @@ class ObstacleListenerService {
     if (waiter != null && !waiter.isCompleted) waiter.complete();
     _responseWaiter = null;
     _awaitingFrameId = null;
+    _saveNextFrame = false;
     await _subscription?.cancel();
     _subscription = null;
   }
@@ -180,5 +280,6 @@ class ObstacleListenerService {
   void dispose() {
     stop();
     _resultsController.close();
+    _captureEventsController.close();
   }
 }

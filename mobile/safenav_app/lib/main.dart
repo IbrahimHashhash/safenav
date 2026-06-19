@@ -5,6 +5,7 @@ import 'core/di/injection.dart';
 
 import 'core/services/camera/camera_frame_source.dart';
 import 'features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
+import 'features/obstacle_avoidance/data/capture_log_service.dart';
 import 'features/obstacle_avoidance/application/obstacle_listener_service.dart';
 import 'features/voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import 'features/home/presentation/home_shell.dart';
@@ -20,6 +21,7 @@ void main() async {
     datasource: sl<NavigationWebSocketDatasource>(),
     cameraSource: sl<CameraFrameSource>(),
     voiceCubit: voiceCubit,
+    captureLog: sl<CaptureLogService>(),
   );
 
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));

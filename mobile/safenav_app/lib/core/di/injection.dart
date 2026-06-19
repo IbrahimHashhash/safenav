@@ -7,6 +7,7 @@ import '../../features/voice_interaction/application/voice_assistant_service.dar
 import '../../features/voice_interaction/domain/usecases/extract_location_usecase.dart';
 import '../../features/voice_interaction/domain/usecases/parse_intent_usecase.dart';
 import '../../features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
+import '../../features/obstacle_avoidance/data/capture_log_service.dart';
 import '../../features/mapbox_navigation/application/navigation_service.dart';
 import '../../features/mapbox_navigation/data/data_sources/mapbox_datasource.dart';
 import '../../features/mapbox_navigation/data/repositories/campus_route_repository_impl.dart';
@@ -80,4 +81,6 @@ Future<void> initDependencies() async {
   );
 
   sl.registerLazySingleton<CameraFrameSource>(() => CameraFrameSourceImpl());
+
+  sl.registerLazySingleton(() => CaptureLogService());
 }

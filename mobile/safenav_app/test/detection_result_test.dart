@@ -79,6 +79,24 @@ void main() {
       expect(r.expectedAttachments, 0);
     });
 
+    test('parses MAD from the top level', () {
+      final r = DetectionResult.fromJson({'instruction': 'x', 'mad': 2.73});
+      expect(r.mad, closeTo(2.73, 1e-9));
+    });
+
+    test('parses MAD nested in metrics', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'x',
+        'metrics': {'mad': 1.5, 'yolo_ms': 10.0},
+      });
+      expect(r.mad, closeTo(1.5, 1e-9));
+    });
+
+    test('mad is null when not provided', () {
+      final r = DetectionResult.fromJson({'instruction': 'x'});
+      expect(r.mad, isNull);
+    });
+
     test('exposes all scalar metrics for listing', () {
       final r = DetectionResult.fromJson({
         'instruction': 'x',

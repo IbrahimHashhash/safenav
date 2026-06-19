@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -36,8 +37,52 @@ class DeveloperScreen extends StatefulWidget {
 }
 
 class _DeveloperScreenState extends State<DeveloperScreen> {
+  static const Color _accent = Color(0xFF26C6DA);
+
   _ModelPreview _selected = _ModelPreview.yolo;
   String _lastSpoken = '';
+
+  StreamSubscription<DetectionResult>? _sub;
+  DetectionResult? _result;
+
+  // Last successfully received preview per model. Kept across skipped frames
+  // (a skipped frame carries no previews) so the image never blanks out.
+  Uint8List? _lastYolo;
+  Uint8List? _lastSeg;
+  Uint8List? _lastDepth;
+
+  @override
+  void initState() {
+    super.initState();
+    _result = widget.listener.lastResult;
+    _cachePreviews(_result);
+    _sub = widget.listener.results.listen((r) {
+      if (!mounted) return;
+      setState(() {
+        _result = r;
+        _cachePreviews(r);
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  void _cachePreviews(DetectionResult? r) {
+    if (r == null) return;
+    if (r.yoloPreview != null) _lastYolo = r.yoloPreview;
+    if (r.segPreview != null) _lastSeg = r.segPreview;
+    if (r.depthPreview != null) _lastDepth = r.depthPreview;
+  }
+
+  Uint8List? get _selectedBytes => switch (_selected) {
+        _ModelPreview.yolo => _lastYolo,
+        _ModelPreview.sam => _lastSeg,
+        _ModelPreview.depth => _lastDepth,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -51,69 +96,238 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         top: false,
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-          child: StreamBuilder<DetectionResult>(
-            stream: widget.listener.results,
-            initialData: widget.listener.lastResult,
-            builder: (context, snapshot) {
-              final result = snapshot.data;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  StreamingButton(
-                    streaming: widget.streaming,
-                    busy: widget.busy,
-                    onPressed: widget.onToggleStreaming,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              StreamingButton(
+                streaming: widget.streaming,
+                busy: widget.busy,
+                onPressed: widget.onToggleStreaming,
+              ),
+              const SizedBox(height: 16),
+
+              _statusStrip(),
+              const SizedBox(height: 16),
+
+              _section(
+                icon: Icons.videocam,
+                title: 'Camera preview',
+                child: _cameraPreview(context),
+              ),
+              const SizedBox(height: 14),
+
+              _section(
+                icon: Icons.map,
+                title: 'Map & current location',
+                child: SizedBox(
+                  height: 240,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: const NavigationMapView(showCoordinates: true),
                   ),
-                  const SizedBox(height: 16),
+                ),
+              ),
+              const SizedBox(height: 14),
 
-                  _sectionTitle('Camera preview'),
-                  _cameraPreview(context),
-                  const SizedBox(height: 16),
+              _section(
+                icon: Icons.record_voice_over,
+                title: 'Spoken instruction (navigation / obstacle)',
+                child: CaptionCard(
+                  label: 'Last spoken',
+                  text: _lastSpoken,
+                  icon: Icons.record_voice_over,
+                  accent: _accent,
+                ),
+              ),
+              const SizedBox(height: 14),
 
-                  _sectionTitle('Map & current location'),
-                  _mapAndCoords(),
-                  const SizedBox(height: 16),
+              _section(
+                icon: Icons.image_search,
+                title: 'Model previews',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _previewSelector(),
+                    const SizedBox(height: 10),
+                    _previewImage(),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
 
-                  _sectionTitle('Spoken instruction (navigation / obstacle)'),
-                  CaptionCard(
-                    label: 'Last spoken',
-                    text: _lastSpoken,
-                    icon: Icons.record_voice_over,
-                    accent: const Color(0xFF26C6DA),
-                  ),
-                  const SizedBox(height: 16),
+              _section(
+                icon: Icons.report,
+                title: 'Detected obstacles',
+                child: _obstacleList(),
+              ),
+              const SizedBox(height: 14),
 
-                  _sectionTitle('Model previews'),
-                  _previewSelector(),
-                  const SizedBox(height: 8),
-                  _previewImage(result),
-                  const SizedBox(height: 16),
-
-                  _sectionTitle('Detected obstacles'),
-                  _obstacleList(result),
-                  const SizedBox(height: 16),
-
-                  _sectionTitle('Metrics'),
-                  _metrics(result),
-                ],
-              );
-            },
+              _section(
+                icon: Icons.speed,
+                title: 'Performance metrics',
+                child: _metrics(),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _sectionTitle(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(
-          text,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-      );
+  // --- Layout helpers -------------------------------------------------------
 
-  // Camera preview occupies half the screen height; cover-fit so it is never
-  // squeezed.
+  Widget _section({
+    required IconData icon,
+    required String title,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: _accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  // --- Status strip (frame id, skipped, MAD, latency, fps) ------------------
+
+  Widget _statusStrip() {
+    final r = _result;
+    final skipped = r?.skipped == true;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = (constraints.maxWidth - 10) / 2;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            _statTile(
+              tileWidth,
+              'Frame sent',
+              r != null ? '#${r.frameId}' : '—',
+              icon: Icons.tag,
+            ),
+            _statTile(
+              tileWidth,
+              'Frame status',
+              r == null ? '—' : (skipped ? 'Skipped' : 'Processed'),
+              valueColor: r == null
+                  ? Colors.white
+                  : (skipped ? Colors.orangeAccent : Colors.lightGreenAccent),
+              icon: skipped ? Icons.fast_forward : Icons.check_circle,
+            ),
+            _statTile(
+              tileWidth,
+              'MAD',
+              r?.mad != null ? r!.mad!.toStringAsFixed(2) : '—',
+              icon: Icons.compare,
+            ),
+            _statTile(
+              tileWidth,
+              'End-to-end',
+              r?.endToEndMs != null
+                  ? '${r!.endToEndMs!.toStringAsFixed(0)} ms'
+                  : '—',
+              valueColor: Colors.amberAccent,
+              icon: Icons.timer,
+            ),
+            _statTile(
+              tileWidth,
+              'Server FPS',
+              r?.metrics.serverFps != null
+                  ? r!.metrics.serverFps!.toStringAsFixed(1)
+                  : '—',
+              icon: Icons.bolt,
+            ),
+            _statTile(
+              tileWidth,
+              'Server total',
+              r?.metrics.totalMs != null
+                  ? '${r!.metrics.totalMs!.toStringAsFixed(0)} ms'
+                  : '—',
+              icon: Icons.dns,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _statTile(
+    double width,
+    String label,
+    String value, {
+    Color valueColor = Colors.white,
+    IconData? icon,
+  }) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14, color: Colors.white54),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Camera preview (half screen, cover-fit) ------------------------------
+
   Widget _cameraPreview(BuildContext context) {
     final height = MediaQuery.of(context).size.height * 0.5;
     final cam = widget.listener.cameraSource;
@@ -129,8 +343,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 fit: BoxFit.cover,
                 clipBehavior: Clip.hardEdge,
                 child: SizedBox(
-                  // previewSize is in sensor (landscape) orientation; swap for
-                  // the portrait widget so cover-fit keeps the aspect ratio.
                   width: cam.previewSize!.height,
                   height: cam.previewSize!.width,
                   child: cam.buildPreview(),
@@ -150,15 +362,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  Widget _mapAndCoords() {
-    return SizedBox(
-      height: 240,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: const NavigationMapView(showCoordinates: true),
-      ),
-    );
-  }
+  // --- Model previews -------------------------------------------------------
 
   Widget _previewSelector() {
     return Wrap(
@@ -174,57 +378,79 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  String _previewLabel(_ModelPreview p) {
-    switch (p) {
-      case _ModelPreview.yolo:
-        return 'YOLO boxes';
-      case _ModelPreview.sam:
-        return 'Ground (SAM 2.1)';
-      case _ModelPreview.depth:
-        return 'Depth';
-    }
-  }
+  String _previewLabel(_ModelPreview p) => switch (p) {
+        _ModelPreview.yolo => 'YOLO boxes',
+        _ModelPreview.sam => 'Ground (SAM 2.1)',
+        _ModelPreview.depth => 'Depth',
+      };
 
-  Uint8List? _selectedBytes(DetectionResult? r) {
-    if (r == null) return null;
-    switch (_selected) {
-      case _ModelPreview.yolo:
-        return r.yoloPreview;
-      case _ModelPreview.sam:
-        return r.segPreview;
-      case _ModelPreview.depth:
-        return r.depthPreview;
-    }
-  }
+  Widget _previewImage() {
+    final bytes = _selectedBytes;
+    final skipped = _result?.skipped == true;
 
-  Widget _previewImage(DetectionResult? r) {
-    final bytes = _selectedBytes(r);
     return Container(
       height: 260,
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white10,
+        color: Colors.black26,
         borderRadius: BorderRadius.circular(12),
       ),
       clipBehavior: Clip.hardEdge,
       alignment: Alignment.center,
-      child: bytes != null
-          ? Image.memory(
-              bytes,
-              gaplessPlayback: true,
-              fit: BoxFit.contain,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (bytes != null)
+            Image.memory(bytes, gaplessPlayback: true, fit: BoxFit.contain)
+          else if (widget.streaming)
+            const Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
             )
-          : Text(
-              widget.streaming
-                  ? 'Waiting for ${_previewLabel(_selected)} preview…'
-                  : 'Start streaming to receive previews',
-              style: const TextStyle(color: Colors.white70),
+          else
+            const Center(
+              child: Text(
+                'Start streaming to receive previews',
+                style: TextStyle(color: Colors.white70),
+              ),
             ),
+          // When the current frame was skipped, keep showing the last preview
+          // but make clear it is not live.
+          if (skipped && bytes != null)
+            Positioned(
+              left: 8,
+              top: 8,
+              child: _badge('Skipped · last processed frame',
+                  Colors.orangeAccent),
+            ),
+        ],
+      ),
     );
   }
 
-  Widget _obstacleList(DetectionResult? r) {
-    final obstacles = r?.obstacles ?? const <DetectedObstacle>[];
+  Widget _badge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.8)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+            color: color, fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  // --- Obstacles ------------------------------------------------------------
+
+  Widget _obstacleList() {
+    final obstacles = _result?.obstacles ?? const <DetectedObstacle>[];
     if (obstacles.isEmpty) {
       return const Text('No obstacles detected.',
           style: TextStyle(color: Colors.white54));
@@ -233,7 +459,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       children: [
         for (final o in obstacles)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
                 const Icon(Icons.crop_square, size: 16, color: Colors.orange),
@@ -241,13 +467,15 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 Expanded(
                   flex: 3,
                   child: Text(o.label,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 15)),
                 ),
                 Expanded(
                   flex: 2,
                   child: Text(
                     '${(o.confidence * 100).toStringAsFixed(0)}%',
                     textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 15),
                   ),
                 ),
                 Expanded(
@@ -257,7 +485,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                         ? '${o.distanceMeters!.toStringAsFixed(1)} m'
                         : '— m',
                     textAlign: TextAlign.right,
-                    style: const TextStyle(color: Colors.cyanAccent),
+                    style: const TextStyle(
+                        color: Colors.cyanAccent, fontSize: 15),
                   ),
                 ),
               ],
@@ -267,7 +496,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  Widget _metrics(DetectionResult? r) {
+  // --- Metrics --------------------------------------------------------------
+
+  Widget _metrics() {
+    final r = _result;
     if (r == null) {
       return const Text('No metrics yet.',
           style: TextStyle(color: Colors.white54));
@@ -275,17 +507,15 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     final rows = <Widget>[
       _metricRow(
         'End-to-end latency (client)',
-        r.endToEndMs != null
-            ? '${r.endToEndMs!.toStringAsFixed(1)} ms'
-            : '—',
+        r.endToEndMs != null ? '${r.endToEndMs!.toStringAsFixed(1)} ms' : '—',
         highlight: true,
       ),
-      if (r.skipped)
-        _metricRow('Frame', 'skipped (reused previous result)'),
+      if (r.mad != null) _metricRow('MAD', r.mad!.toStringAsFixed(2)),
+      _metricRow('Frame', r.skipped ? 'skipped (reused last result)' : 'processed'),
     ];
 
-    // All scalar metrics reported by the server.
     for (final e in r.metrics.scalarEntries) {
+      if (e.key == 'mad' || e.key == 'frame_mad') continue; // shown above
       final isMs = e.key.endsWith('_ms');
       final value = e.value;
       final text = isMs
@@ -308,7 +538,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
 
   Widget _metricRow(String label, String value, {bool highlight = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
           Expanded(
@@ -316,6 +546,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
               label,
               style: TextStyle(
                 color: highlight ? Colors.amberAccent : Colors.white70,
+                fontSize: 15,
                 fontWeight: highlight ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -323,7 +554,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           Text(
             value,
             style: TextStyle(
-              fontWeight: FontWeight.w600,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
               color: highlight ? Colors.amberAccent : Colors.white,
             ),
           ),

@@ -92,6 +92,11 @@ class DetectionResult {
   final int? frameHeight;
   final bool skipped;
 
+  /// Mean Absolute Difference vs. the previous processed frame (the server's
+  /// frame-similarity signal). Lower = more similar; the server skips frames
+  /// below its threshold. Null when the server doesn't report it.
+  final double? mad;
+
   final bool depthAttached;
   final bool segAttached;
   final bool yoloAttached;
@@ -117,6 +122,7 @@ class DetectionResult {
     required this.frameWidth,
     required this.frameHeight,
     required this.skipped,
+    required this.mad,
     required this.depthAttached,
     required this.segAttached,
     required this.yoloAttached,
@@ -155,6 +161,13 @@ class DetectionResult {
       return null;
     }
 
+    double? num2(dynamic v) => v is num ? v.toDouble() : null;
+    // MAD may arrive top-level or nested in metrics, under a few names.
+    final mad = num2(json['mad']) ??
+        num2(json['frame_mad']) ??
+        num2(metricsRaw is Map ? metricsRaw['mad'] : null) ??
+        num2(metricsRaw is Map ? metricsRaw['frame_mad'] : null);
+
     return DetectionResult(
       frameId: (json['frame_id'] as num?)?.toInt() ?? 0,
       instruction: instructionValue is String ? instructionValue.trim() : '',
@@ -163,6 +176,7 @@ class DetectionResult {
       frameWidth: dim('w'),
       frameHeight: dim('h'),
       skipped: json['skipped'] == true,
+      mad: mad,
       depthAttached: json['depth_attached'] == true,
       segAttached: json['seg_attached'] == true,
       yoloAttached: json['yolo_attached'] == true,

@@ -100,6 +100,20 @@ void main() {
       expect(r.mad, closeTo(3.14, 1e-9));
     });
 
+    test('skipped frame: fresh top-level sig_mad wins over stale metrics copy',
+        () {
+      // A skipped response is a copy of the last processed one (stale
+      // metrics.frame_signature_mad) plus a fresh top-level sig_mad.
+      final r = DetectionResult.fromJson({
+        'frame_id': 9,
+        'skipped': true,
+        'sig_mad': 0.42,
+        'metrics': {'frame_signature_mad': 7.7, 'yolo_ms': 10.0},
+      });
+      expect(r.skipped, isTrue);
+      expect(r.mad, closeTo(0.42, 1e-9));
+    });
+
     test('mad is null when not provided', () {
       final r = DetectionResult.fromJson({'instruction': 'x'});
       expect(r.mad, isNull);

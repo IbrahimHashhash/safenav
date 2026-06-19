@@ -164,9 +164,13 @@ class DetectionResult {
     double? num2(dynamic v) => v is num ? v.toDouble() : null;
     double? metric(String k) =>
         metricsRaw is Map ? num2(metricsRaw[k]) : null;
-    // MAD: the server reports it inside metrics as `frame_signature_mad`;
-    // a few other names/top-level placements are accepted defensively.
-    final mad = num2(json['mad']) ??
+    // MAD sources, in priority order:
+    //  - skipped frames send a FRESH value top-level as `sig_mad` (the response
+    //    is a copy of the last processed one, so its metrics.frame_signature_mad
+    //    would be stale — top-level wins).
+    //  - processed frames report it inside metrics as `frame_signature_mad`.
+    final mad = num2(json['sig_mad']) ??
+        num2(json['mad']) ??
         num2(json['frame_mad']) ??
         metric('frame_signature_mad') ??
         metric('mad') ??

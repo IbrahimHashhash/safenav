@@ -1,5 +1,72 @@
 import 'dart:typed_data';
 
+/// One vertical free-zone region from the server's `free_zones` analysis.
+/// [free] true = clear (green), false = blocked (red). [clearanceM] is the
+/// estimated clear distance for the region in meters, when provided. Regions
+/// are ordered left-to-right across the analysis band.
+class FreeZone {
+  final bool free;
+  final double? clearanceM;
+
+  const FreeZone(this.free, {this.clearanceM});
+}
+
+/// Parses the server's `free_zones` field into ordered [FreeZone]s.
+///
+/// Tolerant of the shapes the navigation pipeline might emit:
+///  - list of bools:           `[true, false, true, true, false]`
+///  - list of objects:         `[{"free": true, "clearance_m": 2.3}, ...]`
+///    (also accepts is_free / occupied / status:"free"|"clear")
+///  - list of FREE indices:    `[0, 2, 4]` (interpreted over 5 regions)
+List<FreeZone> parseFreeZones(dynamic raw, {int regionCount = 5}) {
+  if (raw is! List || raw.isEmpty) return const [];
+
+  // All-numeric -> indices of the free regions.
+  if (raw.every((e) => e is num)) {
+    final freeIdx = raw.map((e) => (e as num).toInt()).toSet();
+    return List.generate(regionCount, (i) => FreeZone(freeIdx.contains(i)));
+  }
+
+  final out = <FreeZone>[];
+  for (final e in raw) {
+    if (e is bool) {
+      out.add(FreeZone(e));
+    } else if (e is Map) {
+      out.add(FreeZone(_zoneIsFree(e), clearanceM: _zoneClearance(e)));
+    }
+  }
+  return out;
+}
+
+double? _zoneClearance(Map e) {
+  for (final k in [
+    'clearance_m',
+    'clearance',
+    'clear_m',
+    'free_distance_m',
+    'distance_m',
+    'depth_m',
+  ]) {
+    if (e[k] is num) return (e[k] as num).toDouble();
+  }
+  return null;
+}
+
+bool _zoneIsFree(Map e) {
+  for (final k in ['free', 'is_free', 'isFree', 'clear']) {
+    if (e[k] is bool) return e[k] as bool;
+  }
+  for (final k in ['blocked', 'occupied', 'is_blocked', 'isBlocked']) {
+    if (e[k] is bool) return !(e[k] as bool);
+  }
+  final status = e['status'] ?? e['state'];
+  if (status is String) {
+    final s = status.toLowerCase();
+    return s == 'free' || s == 'clear' || s == 'open';
+  }
+  return false;
+}
+
 /// A single detected obstacle from the server's `obstacles` array.
 class DetectedObstacle {
   final String label;
@@ -87,6 +154,7 @@ class DetectionResult {
   final int frameId;
   final String instruction;
   final List<DetectedObstacle> obstacles;
+  final List<FreeZone> freeZones;
   final ServerMetrics metrics;
   final int? frameWidth;
   final int? frameHeight;
@@ -118,6 +186,7 @@ class DetectionResult {
     required this.frameId,
     required this.instruction,
     required this.obstacles,
+    required this.freeZones,
     required this.metrics,
     required this.frameWidth,
     required this.frameHeight,
@@ -180,6 +249,7 @@ class DetectionResult {
       frameId: (json['frame_id'] as num?)?.toInt() ?? 0,
       instruction: instructionValue is String ? instructionValue.trim() : '',
       obstacles: obstacles,
+      freeZones: parseFreeZones(json['free_zones']),
       metrics: metrics,
       frameWidth: dim('w'),
       frameHeight: dim('h'),

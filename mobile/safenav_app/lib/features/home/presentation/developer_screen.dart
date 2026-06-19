@@ -13,7 +13,7 @@ import '../../obstacle_avoidance/domain/entities/detection_result.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_state.dart';
 
-enum _ModelPreview { yolo, sam, depth }
+enum _ModelPreview { yolo, depth, freeZone }
 
 /// Developer/debug screen: live camera preview, the navigation map with the
 /// current coordinates, a caption of the last spoken instruction (navigation
@@ -52,7 +52,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
   Uint8List? _lastYolo;
-  Uint8List? _lastSeg;
   Uint8List? _lastDepth;
 
   @override
@@ -117,14 +116,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   void _cachePreviews(DetectionResult? r) {
     if (r == null) return;
     if (r.yoloPreview != null) _lastYolo = r.yoloPreview;
-    if (r.segPreview != null) _lastSeg = r.segPreview;
     if (r.depthPreview != null) _lastDepth = r.depthPreview;
   }
 
   Uint8List? get _selectedBytes => switch (_selected) {
         _ModelPreview.yolo => _lastYolo,
-        _ModelPreview.sam => _lastSeg,
         _ModelPreview.depth => _lastDepth,
+        _ModelPreview.freeZone => null,
       };
 
   @override
@@ -242,6 +240,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                     _previewSelector(),
                     const SizedBox(height: 10),
                     _previewImage(),
+                    if (_selected == _ModelPreview.freeZone)
+                      _clearanceCards(),
                   ],
                 ),
               ),
@@ -472,11 +472,15 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
 
   String _previewLabel(_ModelPreview p) => switch (p) {
         _ModelPreview.yolo => 'YOLO boxes',
-        _ModelPreview.sam => 'Ground (SAM 2.1)',
         _ModelPreview.depth => 'Depth',
+        _ModelPreview.freeZone => 'Free zones',
       };
 
   Widget _previewImage() {
+    if (_selected == _ModelPreview.freeZone) {
+      return _freeZoneView();
+    }
+
     final bytes = _selectedBytes;
     final skipped = _result?.skipped == true;
 
@@ -518,6 +522,155 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
               child: _badge('Skipped · last processed frame',
                   Colors.orangeAccent),
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Visualises the server's free-zone analysis: the vertical regions across
+  /// the analysis band, green = free, red = blocked.
+  Widget _freeZoneView() {
+    final zones = _result?.freeZones ?? const <FreeZone>[];
+    final skipped = _result?.skipped == true;
+
+    return Container(
+      height: 260,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: zones.isEmpty
+          ? const Center(
+              child: Text(
+                'No free-zone data yet. Capture a frame or start streaming.',
+                style: TextStyle(color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+            )
+          : Stack(
+              children: [
+                // The analysis band with the vertical regions.
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: SizedBox(
+                      height: 120,
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < zones.length; i++)
+                            Expanded(
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(
+                                    horizontal: 3),
+                                decoration: BoxDecoration(
+                                  color: zones[i].free
+                                      ? Colors.green.withValues(alpha: 0.65)
+                                      : Colors.red.withValues(alpha: 0.65),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: Colors.white.withValues(
+                                          alpha: 0.85),
+                                      width: 1.5),
+                                ),
+                                alignment: Alignment.center,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      '${i + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      zones[i].free ? 'free' : 'blocked',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: _badge(
+                    'Free-zone analysis · ${zones.length} regions',
+                    _accent,
+                  ),
+                ),
+                if (skipped)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: _badge('Skipped · last frame', Colors.orangeAccent),
+                  ),
+              ],
+            ),
+    );
+  }
+
+  /// Per-region clearance cards shown below the free-zone band. Green when the
+  /// region is clear/free, red when blocked.
+  Widget _clearanceCards() {
+    final zones = _result?.freeZones ?? const <FreeZone>[];
+    if (zones.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          for (var i = 0; i < zones.length; i++)
+            Expanded(child: _clearanceCard(i, zones[i])),
+        ],
+      ),
+    );
+  }
+
+  Widget _clearanceCard(int index, FreeZone zone) {
+    final color = zone.free ? Colors.green : Colors.red;
+    final clearance =
+        zone.clearanceM != null ? '${zone.clearanceM!.toStringAsFixed(1)} m' : '—';
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.75)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            'R${index + 1}',
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            clearance,
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            zone.free ? 'clear' : 'blocked',
+            style: TextStyle(color: color, fontSize: 10),
+          ),
         ],
       ),
     );

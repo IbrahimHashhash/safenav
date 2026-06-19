@@ -22,7 +22,8 @@ Server -> client (when include_depth is true):
     [0:4]   uint32 BE frame_id
     [4]     uint8 flags  (bit 0 = depth, bit 1 = SAM ground segmentation,
                           bit 2 = YOLO detections, bit 3 = raw binary ground
-                          mask as PNG -- exactly one bit per message)
+                          mask as PNG, bit 4 = free-zone overlay -- exactly one
+                          bit per message)
     [5:]    JPEG bytes
     Sent immediately after the JSON; correlate to the JSON via frame_id and
     switch on the flags byte. Sending raw bytes avoids the ~33 % bandwidth and
@@ -53,7 +54,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # project-local
 from models.sam_ground_segmenter import filter_ground_depth, save_debug
-from utils.navigation import init_tracker_state, run_detection_pipeline
+from utils.navigation import (
+    init_tracker_state,
+    run_detection_pipeline,
+    _BAND_TOP_FRAC as NAV_BAND_TOP_FRAC,
+    _BAND_BOTTOM_FRAC as NAV_BAND_BOTTOM_FRAC,
+    _ZONE_NAMES as NAV_ZONE_NAMES,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -99,7 +106,7 @@ SAM_DEBUG_EVERY  = int(os.environ.get("SAM_DEBUG_EVERY", 60))  # ...every N fram
 # absolute difference is below FRAME_SKIP_MAD the frame is considered unchanged
 # and we reuse the previous result instead of re-running the models.
 FRAME_SKIP_ENABLED    = os.environ.get("FRAME_SKIP", "1") == "1"
-FRAME_SKIP_MAD        = float(os.environ.get("FRAME_SKIP_MAD", 3.0))  # 0-255 scale
+FRAME_SKIP_MAD        = float(os.environ.get("FRAME_SKIP_MAD", 30.0))  # 0-255 scale; previously it was 3.0
 FRAME_SKIP_MAX_CONSEC = int(os.environ.get("FRAME_SKIP_MAX_CONSEC", 30))  # force refresh
 FRAME_SIG_DIM         = 32       # signature is FRAME_SIG_DIM x FRAME_SIG_DIM gray
 
@@ -109,6 +116,7 @@ DEPTH_FLAG = 0x01                # bit 0 of flags byte = depth preview follows
 SEG_FLAG   = 0x02                # bit 1 = SAM ground-segmentation preview follows
 YOLO_FLAG  = 0x04                # bit 2 = YOLO detection preview follows
 MASK_FLAG  = 0x08                # bit 3 = raw binary ground mask (PNG) follows
+FREEZONE_FLAG = 0x10             # bit 4 = free-zone overlay preview (JPEG) follows
 HEADER_SIZE = 5                  # 4B frame_id + 1B flags
 
 ROLLING_WINDOW = 30              # frames kept in the timing window
@@ -213,15 +221,20 @@ def _load_models() -> None:
         log.exception("Failed to load DAV2 model -- /ws/navigation will return errors")
         _dav2_model = None
 
-    # SAM 2.1 ground segmenter (optional: if it fails, ground filtering is just
-    # disabled and the pipeline still serves obstacle/navigation results).
-    try:
-        from models.sam_ground_segmenter import SAMGroundSegmenter
-        _sam_segmenter = SAMGroundSegmenter(variant=SAM_VARIANT, device=DEVICE)
-        log.info("SAM loaded (%s, device=%s)", SAM_VARIANT, DEVICE)
-    except Exception:
-        log.exception("Failed to load SAM model -- ground filtering disabled")
-        _sam_segmenter = None
+    # SAM 2.1 ground segmenter -- DISABLED.
+    # Free-zone analysis now avoids the ground geometrically (a horizon-centred
+    # band in utils/navigation.py) instead of semantically. SAM was unreliable
+    # at ground in field testing and was the heaviest model in the pipeline, so
+    # it is left unloaded; _sam_segmenter stays None and every guarded SAM/
+    # ground-filter branch below becomes a no-op. To re-enable, uncomment this.
+    # try:
+    #     from models.sam_ground_segmenter import SAMGroundSegmenter
+    #     _sam_segmenter = SAMGroundSegmenter(variant=SAM_VARIANT, device=DEVICE)
+    #     log.info("SAM loaded (%s, device=%s)", SAM_VARIANT, DEVICE)
+    # except Exception:
+    #     log.exception("Failed to load SAM model -- ground filtering disabled")
+    #     _sam_segmenter = None
+    log.info("SAM ground segmenter disabled (free-zone uses geometric band)")
 
 
 # --------------------------------------------------------------------------- #
@@ -393,6 +406,37 @@ def _encode_mask_preview(ground_mask: np.ndarray | None) -> bytes | None:
         return None
     ok, buf = cv2.imencode(".png", ground_mask.astype(np.uint8) * 255)
     return buf.tobytes() if ok else None
+
+
+def _encode_freezones_preview(frame: np.ndarray, free_zones: dict | None) -> bytes | None:
+    """Draw the 5 free-zone lanes + horizon band over the frame so the depth-only
+    free-zone analysis can be inspected (green = clear/walkable, red = blocked;
+    each lane labelled with its calibrated clearance in metres)."""
+    if not free_zones:
+        return None
+    vis = frame.copy()
+    h, w = vis.shape[:2]
+    band_top = int(h * NAV_BAND_TOP_FRAC)
+    band_bot = int(h * NAV_BAND_BOTTOM_FRAC)
+    edges = np.linspace(0, w, len(NAV_ZONE_NAMES) + 1, dtype=int)
+
+    # translucent green/red fill per lane (only inside the analysed band)
+    overlay = vis.copy()
+    for i, name in enumerate(NAV_ZONE_NAMES):
+        z = free_zones.get(name, {})
+        color = (0, 180, 0) if z.get("clear") else (0, 0, 255)  # BGR
+        cv2.rectangle(overlay, (edges[i], band_top), (edges[i + 1], band_bot), color, -1)
+    vis = cv2.addWeighted(overlay, 0.35, vis, 0.65, 0.0)
+
+    # lane borders + clearance labels
+    for i, name in enumerate(NAV_ZONE_NAMES):
+        cv2.rectangle(vis, (edges[i], band_top), (edges[i + 1], band_bot),
+                      (255, 255, 255), 1)
+        z = free_zones.get(name, {})
+        txt = f"{z.get('clearance_m', '?')}m"
+        cv2.putText(vis, txt, (edges[i] + 3, band_bot - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    return _encode_preview_bgr(vis)
 
 
 # --------------------------------------------------------------------------- #
@@ -574,7 +618,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
 
     try:
         while True:
-            t_total = time.perf_counter()
+            t_total = -1 # time.perf_counter()
 
             # ---- 1) receive + decode --------------------------------------
             try:
@@ -587,6 +631,8 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 log.warning("Bad frame from %s: %s", addr, exc)
                 await websocket.send_text(json.dumps({"error": f"Bad frame: {exc}"}))
                 continue
+
+            t_total = time.perf_counter()
 
             t_decode = time.perf_counter()
             try:
@@ -609,14 +655,21 @@ async def navigation_ws(websocket: WebSocket) -> None:
             # If this frame is near-identical to the last one we actually
             # processed, reuse that result instead of re-running the models.
             sig = _frame_signature(frame)
-            if (FRAME_SKIP_ENABLED and last_response is not None and last_sig is not None
+            sig_mad = -1
+            if last_sig is not None:
+                sig_mad = float(np.mean(np.abs(sig - last_sig)))
+    
+            if (FRAME_SKIP_ENABLED 
+                    and last_response is not None 
+                    and last_sig is not None
                     and consec_skips < FRAME_SKIP_MAX_CONSEC
-                    and float(np.mean(np.abs(sig - last_sig))) < FRAME_SKIP_MAD):
+                    and sig_mad < FRAME_SKIP_MAD):
                 consec_skips += 1
                 frames_skipped += 1
                 skip_resp = dict(last_response)
                 skip_resp.update({
                     "frame_id": frame_id, "skipped": True,
+                    "sig_mad": round(sig_mad, 4),
                     "depth_attached": False, "seg_attached": False,
                     "yolo_attached": False, "mask_attached": False,
                 })
@@ -710,8 +763,9 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 seg_jpeg = _encode_seg_preview(frame, ground_mask)
                 yolo_jpeg = _encode_yolo_preview(frame, detections)
                 mask_png = _encode_mask_preview(ground_mask)
+                freezone_jpeg = _encode_freezones_preview(frame, result["free_zones"])
             else:
-                depth_jpeg = seg_jpeg = yolo_jpeg = mask_png = None
+                depth_jpeg = seg_jpeg = yolo_jpeg = mask_png = freezone_jpeg = None
             encode_ms = (time.perf_counter() - t_encode) * 1000.0
 
             total_ms = (time.perf_counter() - t_total) * 1000.0
@@ -764,6 +818,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
                     "frames_processed": frames_processed,
                     "frames_failed":    frames_failed,
                     "frames_skipped":   frames_skipped,
+                    "frame_signature_mad": sig_mad,
                     "connection_uptime_s": round(time.perf_counter() - connection_t0, 1),
                 },
                 "device": DEVICE,
@@ -773,6 +828,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 "seg_attached": seg_jpeg is not None,
                 "yolo_attached": yolo_jpeg is not None,
                 "mask_attached": mask_png is not None,
+                "freezone_attached": freezone_jpeg is not None,
             }
             # cache for the frame-similarity skip path (#5)
             last_response = response
@@ -786,6 +842,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 (seg_jpeg, SEG_FLAG),
                 (yolo_jpeg, YOLO_FLAG),
                 (mask_png, MASK_FLAG),
+                (freezone_jpeg, FREEZONE_FLAG),
             ):
                 if jpeg is not None:
                     header = frame_id.to_bytes(4, "big") + bytes([flag])

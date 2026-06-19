@@ -134,4 +134,54 @@ void main() {
       expect(keys, isNot(contains('rolling')));
     });
   });
+
+  group('parseFreeZones', () {
+    test('parses a list of booleans in order', () {
+      final z = parseFreeZones([true, false, true, true, false]);
+      expect(z.map((e) => e.free).toList(), [true, false, true, true, false]);
+    });
+
+    test('parses a list of objects (free / blocked / status)', () {
+      final z = parseFreeZones([
+        {'free': true},
+        {'blocked': true},
+        {'status': 'clear'},
+        {'occupied': false},
+        {'is_free': false},
+      ]);
+      expect(z.map((e) => e.free).toList(), [true, false, true, true, false]);
+    });
+
+    test('parses a list of FREE indices over 5 regions', () {
+      final z = parseFreeZones([0, 2, 4]);
+      expect(z.length, 5);
+      expect(z.map((e) => e.free).toList(),
+          [true, false, true, false, true]);
+    });
+
+    test('parses clearance_m per region', () {
+      final z = parseFreeZones([
+        {'free': true, 'clearance_m': 3.5},
+        {'blocked': true, 'clearance_m': 0.4},
+      ]);
+      expect(z[0].free, isTrue);
+      expect(z[0].clearanceM, closeTo(3.5, 1e-9));
+      expect(z[1].free, isFalse);
+      expect(z[1].clearanceM, closeTo(0.4, 1e-9));
+    });
+
+    test('empty / non-list yields no zones', () {
+      expect(parseFreeZones(null), isEmpty);
+      expect(parseFreeZones([]), isEmpty);
+    });
+
+    test('DetectionResult exposes parsed free zones', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'x',
+        'free_zones': [true, false, true, false, true],
+      });
+      expect(r.freeZones.length, 5);
+      expect(r.freeZones.first.free, isTrue);
+    });
+  });
 }

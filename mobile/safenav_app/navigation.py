@@ -24,10 +24,15 @@ _DIST_HIGH_M = 3.0
 _DIST_MEDIUM_M = 5.0   # campus feedback: max obstacle distance is 5 m (was 6)
 
 # free-zone analysis
-_FREE_THRESHOLD_M = 2.5      # zones with clearance >= this are walkable
+_FREE_THRESHOLD_M = 2.5      # zones with clearance >= this (calibrated real m) are walkable
+# free-zone band: a HORIZON-CENTRED slice. SAM ground filtering was removed, so
+# we now avoid the ground plane geometrically -- exclude the lower part of the
+# frame (ground, for a chest/head-height forward-facing camera) and the upper
+# part (sky / ceiling / overhead), keeping the band around the horizon where
+# obstacle bodies cross it. Tune these to the camera pitch on real footage.
 _ZONE_NAMES = ("left", "slight_left", "centre", "slight_right", "right")
-_BAND_TOP_FRAC = 0.45        # exclude ceiling / sky
-_BAND_BOTTOM_FRAC = 0.95     # exclude the immediate floor at the user's feet
+_BAND_TOP_FRAC = 0.15        # exclude the top 15% (sky / ceiling / overhead)
+_BAND_BOTTOM_FRAC = 0.60     # exclude the bottom 40% -- any higher values ( > 0.55) will cause mis-interpretation and consider clear paths as blocked
 _FREE_PERCENTILE = 5.0       # 5th-percentile = closest robust surface
 
 # tracker
@@ -290,10 +295,12 @@ def run_detection_pipeline(
     tracker_state["tracks"] = updated_tracks
 
     # STEP 6 -- precise free-zone analysis.
-    # Sample the *forward walking corridor* only:
+    # Sample a HORIZON-CENTRED slice of the forward walking corridor:
     #   • exclude the top of the frame (ceiling / sky / distant background)
-    #   • exclude the bottom strip (the floor right under the user's feet,
-    #     which is always close and would falsely flag every zone as blocked).
+    #   • exclude the bottom of the frame -- this is the GROUND plane for a
+    #     chest/head-height forward camera. We drop it geometrically here
+    #     instead of relying on SAM ground segmentation (which was unreliable),
+    #     so the close floor never falsely flags every zone as blocked.
     # Split the corridor into 5 vertical zones for finer-grained guidance
     # (left, slight_left, centre, slight_right, right) and use the
     # 5th-percentile of valid depths in each zone as the "closest robust
@@ -311,7 +318,11 @@ def run_detection_pipeline(
             clearance = 0.0
         else:
             valid = column[column > 0.0]
-            clearance = float(np.percentile(valid, _FREE_PERCENTILE)) if valid.size else 0.0
+            raw_clearance = (float(np.percentile(valid, _FREE_PERCENTILE))
+                             if valid.size else 0.0)
+            # calibrate to real metres (same mapping as the per-obstacle distance)
+            clearance = (float(est_to_real_depth(raw_clearance))
+                         if raw_clearance > 0.0 else 0.0)
         free_zones[name] = {
             "clear": clearance >= _FREE_THRESHOLD_M,
             "clearance_m": round(clearance, 2),
@@ -339,9 +350,22 @@ def run_detection_pipeline(
                       or free_zones["slight_left"]["clear"])
         right_clear = (free_zones["right"]["clear"]
                        or free_zones["slight_right"]["clear"])
-        clear_sides = [s for s, ok in (("left", left_clear), ("right", right_clear)) if ok]
-        clearance = (" and ".join(clear_sides) + " clear"
-                     if clear_sides else "sides blocked")
+        centre_clear = free_zones["centre"]["clear"]
+
+        # Report only the directions AWAY from the obstacle: the centre and the
+        # opposite side for a side obstacle, or both sides for a centre obstacle.
+        # Never claim the obstacle's own side is clear (that would be nonsense,
+        # e.g. "car on right -- right clear").
+        if region == "LEFT":
+            candidates = (("centre", centre_clear), ("right", right_clear))
+        elif region == "RIGHT":
+            candidates = (("centre", centre_clear), ("left", left_clear))
+        else:  # CENTRE
+            candidates = (("left", left_clear), ("right", right_clear))
+
+        clear_names = [name for name, ok in candidates if ok]
+        clearance = (" and ".join(clear_names) + " clear"
+                     if clear_names else "no clear path")
 
         instruction = f"{label} {position} {distance_m:.1f} m {_EM_DASH} {clearance}"
 

@@ -53,20 +53,25 @@ class _HomeShellState extends State<HomeShell> {
       return;
     }
 
-    final started = await widget.obstacleListener.start();
+    final result = await widget.obstacleListener.start();
     if (!mounted) return;
+    final started = result == StreamStartResult.started;
     setState(() {
       _streaming = started;
       _togglingStream = false;
     });
     if (!started) {
+      final message = switch (result) {
+        StreamStartResult.serverUnreachable =>
+          'Cannot reach the detection server at '
+              '${widget.obstacleListener.serverUrl}. '
+              'Make sure it is running and on the same network.',
+        StreamStartResult.cameraUnavailable =>
+          'Camera unavailable. Grant the camera permission and try again.',
+        StreamStartResult.started => '',
+      };
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not start obstacle detection. '
-            'Check the camera permission and that the server is reachable.',
-          ),
-        ),
+        SnackBar(content: Text(message), duration: const Duration(seconds: 5)),
       );
     }
   }

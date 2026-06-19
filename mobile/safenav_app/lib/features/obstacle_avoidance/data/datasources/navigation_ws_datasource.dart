@@ -47,6 +47,9 @@ class NavigationWebSocketDatasource {
 
   bool get isConnected => _connected;
 
+  /// The resolved WebSocket URL (for diagnostics/messages).
+  String get url => _wsUrl;
+
   Future<bool> connect() async {
     if (_connected) return true;
     _controller ??= StreamController<DetectionResult>.broadcast();
@@ -202,15 +205,32 @@ class NavigationWebSocketDatasource {
     _controller = null;
   }
 
-  /// `http://host:8000` -> `ws://host:8000/ws/navigation`.
+  /// Builds the navigation WebSocket URL from the configured base URL,
+  /// tolerating whatever form `OBSTACLE_API_URL` is given in:
+  ///   `http://host:8000`            -> `ws://host:8000/ws/navigation`
+  ///   `https://host`                -> `wss://host/ws/navigation`
+  ///   `ws://host:8000`              -> `ws://host:8000/ws/navigation`
+  ///   `ws://host:8000/ws/navigation`-> unchanged (path not duplicated)
   static String _toWsUrl(String baseUrl) {
     var url = baseUrl.trim();
-    if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+
+    // Normalise scheme to ws/wss (leave ws/wss as-is).
     if (url.startsWith('https://')) {
       url = 'wss://${url.substring('https://'.length)}';
     } else if (url.startsWith('http://')) {
       url = 'ws://${url.substring('http://'.length)}';
     }
-    return '$url/ws/navigation';
+
+    // Drop any trailing slash(es).
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+
+    // Append the endpoint path only if it is not already there.
+    const path = '/ws/navigation';
+    if (!url.endsWith(path)) {
+      url = '$url$path';
+    }
+    return url;
   }
 }

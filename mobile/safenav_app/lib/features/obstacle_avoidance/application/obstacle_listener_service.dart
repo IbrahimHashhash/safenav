@@ -5,6 +5,10 @@ import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../data/datasources/navigation_ws_datasource.dart';
 import '../domain/entities/detection_result.dart';
 
+/// Outcome of attempting to start streaming, so the UI can show a precise
+/// message about what went wrong.
+enum StreamStartResult { started, serverUnreachable, cameraUnavailable }
+
 /// Drives the obstacle-avoidance loop:
 ///   camera frame -> WebSocket -> server -> JSON (+ optional previews) ->
 ///   spoken `instruction` (via the shared TTS priority queue).
@@ -24,7 +28,11 @@ class ObstacleListenerService {
   final CameraFrameSource cameraSource;
   final VoiceAssistantCubit voiceCubit;
 
-  static const Duration _captureInterval = Duration(milliseconds: 300);
+  /// Target streaming rate. The capture loop paces itself to this period.
+  static const int _targetFps = 3;
+  static final Duration _framePeriod =
+      Duration(milliseconds: (1000 / _targetFps).round());
+
   static const Duration _repeatCooldown = Duration(seconds: 4);
 
   StreamSubscription<DetectionResult>? _subscription;
@@ -39,19 +47,18 @@ class ObstacleListenerService {
       StreamController<DetectionResult>.broadcast();
   DetectionResult? _lastResult;
 
-  /// Full per-frame results, for the developer screen.
   Stream<DetectionResult> get results => _resultsController.stream;
   DetectionResult? get lastResult => _lastResult;
 
   bool get isStreaming => _running;
+  String get serverUrl => datasource.url;
 
-  /// When true, frames request the model preview images back from the server.
-  /// Toggled on while the developer screen is visible.
   void setPreviewsEnabled(bool enabled) => _previewsEnabled = enabled;
 
-  /// Starts streaming camera frames. Returns true if streaming began.
-  Future<bool> start() async {
-    if (_running) return true;
+  /// Starts streaming camera frames. Returns a [StreamStartResult] describing
+  /// success or the specific failure (server vs camera).
+  Future<StreamStartResult> start() async {
+    if (_running) return StreamStartResult.started;
     _running = true;
 
     _subscription = datasource.stream.listen(_onResult);
@@ -59,22 +66,27 @@ class ObstacleListenerService {
     final connected = await datasource.connect();
     if (!connected) {
       await _teardown();
-      return false;
+      return StreamStartResult.serverUnreachable;
     }
 
     final cameraReady = await cameraSource.initialize();
     if (!cameraReady) {
       await _teardown();
       await datasource.disconnect();
-      return false;
+      return StreamStartResult.cameraUnavailable;
     }
 
     unawaited(_captureLoop());
-    return true;
+    return StreamStartResult.started;
   }
 
+  /// Captures and sends frames, paced to [_targetFps]. The wait after each
+  /// frame is reduced by however long the capture+send already took, so the
+  /// effective rate stays near the target instead of (period + capture time).
   Future<void> _captureLoop() async {
     while (_running) {
+      final stopwatch = Stopwatch()..start();
+
       if (datasource.isConnected && cameraSource.isReady) {
         final jpeg = await cameraSource.captureJpeg();
         if (!_running) break;
@@ -87,7 +99,12 @@ class ObstacleListenerService {
           _frameId++;
         }
       }
-      await Future<void>.delayed(_captureInterval);
+
+      final remaining =
+          _framePeriod.inMilliseconds - stopwatch.elapsedMilliseconds;
+      if (remaining > 0) {
+        await Future<void>.delayed(Duration(milliseconds: remaining));
+      }
     }
   }
 

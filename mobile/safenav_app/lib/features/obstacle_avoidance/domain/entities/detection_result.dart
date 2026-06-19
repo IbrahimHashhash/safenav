@@ -162,11 +162,15 @@ class DetectionResult {
     }
 
     double? num2(dynamic v) => v is num ? v.toDouble() : null;
-    // MAD may arrive top-level or nested in metrics, under a few names.
+    double? metric(String k) =>
+        metricsRaw is Map ? num2(metricsRaw[k]) : null;
+    // MAD: the server reports it inside metrics as `frame_signature_mad`;
+    // a few other names/top-level placements are accepted defensively.
     final mad = num2(json['mad']) ??
         num2(json['frame_mad']) ??
-        num2(metricsRaw is Map ? metricsRaw['mad'] : null) ??
-        num2(metricsRaw is Map ? metricsRaw['frame_mad'] : null);
+        metric('frame_signature_mad') ??
+        metric('mad') ??
+        metric('frame_mad');
 
     return DetectionResult(
       frameId: (json['frame_id'] as num?)?.toInt() ?? 0,

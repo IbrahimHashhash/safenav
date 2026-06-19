@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../shared/widgets/caption_card.dart';
 import '../../../shared/widgets/streaming_button.dart';
@@ -84,6 +85,20 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     super.dispose();
   }
 
+  Future<void> _exportCsv() async {
+    final log = widget.listener.captureLog;
+    final exists = await log.csvExists();
+    if (!mounted) return;
+    if (!exists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No captures to export yet.')),
+      );
+      return;
+    }
+    final path = await log.csvPath();
+    await Share.shareXFiles([XFile(path)], text: 'SafeNav capture log');
+  }
+
   Future<void> _onCapture() async {
     setState(() => _capturing = true);
     final error = await widget.listener.captureOnce();
@@ -159,16 +174,29 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                   ),
                 ],
               ),
-              if (_capturesDir != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Captures saved to: $_capturesDir',
-                    style:
-                        const TextStyle(color: Colors.white38, fontSize: 11),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _capturesDir != null
+                          ? 'Captures: $_capturesDir'
+                          : 'Captures are saved on this device',
+                      style:
+                          const TextStyle(color: Colors.white38, fontSize: 11),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-              const SizedBox(height: 16),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: _exportCsv,
+                    icon: const Icon(Icons.ios_share, size: 18),
+                    label: const Text('Export CSV'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
 
               _statusStrip(),
               const SizedBox(height: 16),
@@ -579,7 +607,12 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     ];
 
     for (final e in r.metrics.scalarEntries) {
-      if (e.key == 'mad' || e.key == 'frame_mad') continue; // shown above
+      // Shown separately as the MAD tile/row; don't duplicate it here.
+      if (e.key == 'mad' ||
+          e.key == 'frame_mad' ||
+          e.key == 'frame_signature_mad') {
+        continue;
+      }
       final isMs = e.key.endsWith('_ms');
       final value = e.value;
       final text = isMs

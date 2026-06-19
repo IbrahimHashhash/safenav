@@ -94,6 +94,12 @@ class CaptureLogService {
   /// Absolute path of the captures directory (for showing the user).
   Future<String> directoryPath() async => (await _ensureDir()).path;
 
+  /// Absolute path of the CSV log file.
+  Future<String> csvPath() async => '${(await _ensureDir()).path}/captures.csv';
+
+  /// Whether the CSV log exists yet (i.e. at least one capture was saved).
+  Future<bool> csvExists() async => File(await csvPath()).exists();
+
   /// Saves the frame JPEG and appends a metrics row to `captures.csv`.
   Future<CaptureRecord> save({
     required Uint8List frameJpeg,

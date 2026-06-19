@@ -92,6 +92,14 @@ void main() {
       expect(r.mad, closeTo(1.5, 1e-9));
     });
 
+    test('parses MAD from metrics.frame_signature_mad (server field)', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'x',
+        'metrics': {'frame_signature_mad': 3.14, 'yolo_ms': 10.0},
+      });
+      expect(r.mad, closeTo(3.14, 1e-9));
+    });
+
     test('mad is null when not provided', () {
       final r = DetectionResult.fromJson({'instruction': 'x'});
       expect(r.mad, isNull);

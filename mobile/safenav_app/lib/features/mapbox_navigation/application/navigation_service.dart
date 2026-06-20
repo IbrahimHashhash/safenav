@@ -28,8 +28,9 @@ class NavigationService {
   /// vertex, so a missed trigger never strands the engine.
   static const double _maneuverTriggerDistance = 6.0;
 
-  /// Distance (meters) at which arrival is announced.
-  static const double _arrivalThreshold = 6.0;
+  /// Distance (meters) at which arrival is announced. Kept comfortably above
+  /// typical pedestrian GPS error so "you have arrived" actually fires.
+  static const double _arrivalThreshold = 12.0;
   static const double _offRouteThreshold = 25.0;
   static const int _offRouteFixesRequired = 3;
 
@@ -45,15 +46,27 @@ class NavigationService {
   /// How long the periodic re-check ticks. Each tick still respects the
   /// global cooldown, so this only governs *when we evaluate*, not how often
   /// we speak.
-  static const Duration _tickInterval = Duration(seconds: 4);
+  static const Duration _tickInterval = Duration(seconds: 3);
 
   /// Heading delta (degrees) beyond which an orientation correction fires.
-  /// Matches the "still straight" threshold so a user on the correct path is
-  /// never told to turn.
   static const double _alignmentDeadzoneDeg = kStraightThresholdDeg;
 
-  /// Snapped-distance noise floor: ignore tiny lateral offsets from the path.
-  static const double _alignmentMinOffRouteMeters = 6.0;
+  /// Heading delta (degrees) below which orientation is considered "aligned"
+  /// again (hysteresis lower bound, prevents flapping around the deadzone).
+  static const double _alignmentClearDeg = 25.0;
+
+  /// How far ahead along the route to aim the "desired heading" target. A few
+  /// meters smooths the target across maneuver vertices so left/right
+  /// corrections don't flip-flop.
+  static const double _lookAheadMeters = 8.0;
+
+  /// Speed (m/s) above which the user is considered "walking": GPS course is
+  /// then trusted as the facing direction and orientation nagging is paused.
+  static const double _movingSpeed = 0.6;
+
+  /// Don't issue the opposite orientation correction within this window unless
+  /// the user is badly misaligned (anti-oscillation).
+  static const Duration _alignFlipGuard = Duration(seconds: 6);
 
   // --- Dependencies ---------------------------------------------------------
 
@@ -88,6 +101,11 @@ class NavigationService {
   Position? _lastProgressPosition;
   int _consecutiveOffRouteFixes = 0;
 
+  /// Direction of the last orientation correction (-1 left, +1 right, 0 none)
+  /// and when it was issued — used to damp left/right oscillation.
+  int _lastAlignDir = 0;
+  DateTime _lastAlignAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   final StreamController<NavigationSnapshot> _snapshotController =
       StreamController<NavigationSnapshot>.broadcast();
   NavigationSnapshot _snapshot = NavigationSnapshot.idle;
@@ -109,11 +127,16 @@ class NavigationService {
   Stream<NavigationSnapshot> get snapshots => _snapshotController.stream;
   NavigationSnapshot get currentSnapshot => _snapshot;
 
-  /// Smoothed, validated heading (degrees). Null until the sensor stabilises.
+  /// Best available heading (degrees). While walking, the GPS course over
+  /// ground is the most reliable indicator of facing and needs no magnetic
+  /// calibration; when stopped, fall back to the smoothed compass.
   double? get _stableHeading {
+    final pos = _currentPosition;
+    if (pos != null && pos.speed > _movingSpeed && pos.heading >= 0) {
+      return pos.heading;
+    }
     final compass = _headingFilter.smoothedHeading;
     if (compass != null && _headingFilter.isStable) return compass;
-    // Fall back to GPS course only when moving (it is meaningless when still).
     return _gpsHeading;
   }
 
@@ -171,6 +194,7 @@ class NavigationService {
     _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
     _lastEmitText = '';
     _lastProgressPosition = null;
+    _lastAlignDir = 0;
     _headingFilter.reset();
 
     _startSensors();
@@ -199,6 +223,7 @@ class NavigationService {
     _currentSegmentIndex = 0;
     _consecutiveOffRouteFixes = 0;
     _lastProgressPosition = null;
+    _lastAlignDir = 0;
     _snapshot = NavigationSnapshot.idle;
     _publishSnapshot();
 
@@ -275,18 +300,12 @@ class NavigationService {
       return;
     }
 
-    final coords = _currentRoute!.coordinates;
-    final projection = projectOntoPolyline(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      coords,
-    );
-
     final next = steps[1];
     final dist = _haversineToPoint(_currentPosition!, next.lat, next.lng);
 
     final heading = _stableHeading;
-    if (heading == null || projection == null) {
+    final desired = _desiredHeading();
+    if (heading == null || desired == null) {
       _emit(
         'Begin walking forward. About ${dist.toInt()} meters to the first '
         'turn. I will correct your direction once I detect which way you '
@@ -296,9 +315,9 @@ class NavigationService {
       return;
     }
 
-    // Align the user with the direction of the route segment they are on,
-    // not the straight-line bearing to the maneuver node.
-    final delta = angleDelta(heading, projection.segmentBearing);
+    // Align the user with the direction the route heads next (a look-ahead
+    // point), not the straight-line bearing to the maneuver node.
+    final delta = angleDelta(heading, desired);
     final phrase = initialDirectionPhrase(delta);
     if (phrase.startsWith('Turn')) {
       // Needs to reorient before walking — an orientation instruction, no
@@ -340,8 +359,6 @@ class NavigationService {
     final coords = _currentRoute!.coordinates;
 
     // Track where we are along the route by projecting onto the polyline.
-    // This is what makes turn detection robust: we no longer require the GPS
-    // to land on the exact maneuver point.
     final projection = projectOntoPolyline(
       position.latitude,
       position.longitude,
@@ -354,40 +371,34 @@ class NavigationService {
       }
     }
 
-    // Reached the final step: only arrival remains.
+    // Global arrival check: announce arrival whenever we are within the
+    // arrival radius of the destination, even if step progression stalled.
+    final destDist = _distanceToDestination();
+    if (destDist != null && destDist < _arrivalThreshold) {
+      _emit('You have arrived at your destination.', critical: true);
+      stopNavigation();
+      return;
+    }
+
+    // On the final step there is no further maneuver; the periodic update
+    // handles "continue to your destination".
     if (_currentStepIndex >= steps.length - 1) {
-      final destDist = _distanceToDestination();
-      if (destDist != null && destDist < _arrivalThreshold) {
-        _emit('You have arrived at your destination.', critical: true);
-        stopNavigation();
-      }
       return;
     }
 
     final next = steps[_currentStepIndex + 1];
     final maneuverVertex = next.polylineIndex;
 
-    // Remaining distance to the maneuver measured ALONG the route polyline
-    // (not straight-line), so it stays accurate around curves.
-    final distToNext = maneuverVertex >= 0
-        ? _distanceAlongRoute(coords, _currentSegmentIndex, maneuverVertex,
-            position)
-        : _haversineToPoint(position, next.lat, next.lng);
+    // Straight-line distance to the maneuver point. This decreases
+    // monotonically as the user approaches, unlike the segment-sum which could
+    // grow if polyline-segment tracking stalled.
+    final distToNext = _haversineToPoint(position, next.lat, next.lng);
 
-    // Has the user passed the maneuver vertex? If so, complete this step even
-    // if the imperative window was somehow skipped. This prevents the engine
-    // from getting stuck announcing "walk ahead" past a turn it never fired.
+    // Has the user passed the maneuver vertex? Backup so a missed trigger
+    // never strands the engine on the wrong step.
     final passedManeuver =
         maneuverVertex >= 0 && _currentSegmentIndex >= maneuverVertex;
 
-    // Fire the turn when within the (reachable) trigger window OR right as we
-    // cross the maneuver vertex. Either way we advance to the next step so it
-    // can never re-fire or get stuck.
-    //
-    // Turns carry NO distance: the instruction is spoken at the moment the
-    // user reaches the turn point. Slight deviations collapse to "continue
-    // straight ahead" (see helpers) and are not spoken as a turn here — going
-    // straight is covered by the periodic progress updates instead.
     if (distToNext <= _maneuverTriggerDistance || passedManeuver) {
       final phrase = _maneuverPhrase(next);
       if (isTurnInstruction(phrase)) {
@@ -397,55 +408,6 @@ class NavigationService {
       _lastProgressPosition = position;
       return;
     }
-
-    // for (final ms in _milestones) {
-    // Pre-announcements: "in N meters, turn left." One per milestone, only
-    // when actually approaching. These are framed as advance notice, NOT as
-    // an instruction to turn immediately.
-    // for (final ms in _approachMilestones) {
-    //   if (!_milestonesAnnounced.contains(ms) && distToNext <= ms.toDouble()) {
-    //     final phrase = _maneuverPhrase(next);
-    //     _emit('In $ms meters, $phrase.');
-    //     _milestonesAnnounced.add(ms);
-    //     break;
-    //   }
-    // }
-  }
-
-  /// Distance in meters from the user's projected position to a target
-  /// polyline vertex, summed along the route segments. Falls back gracefully
-  /// when indices are out of range.
-  double _distanceAlongRoute(
-    List<List<double>> coords,
-    int fromSegment,
-    int toVertex,
-    Position position,
-  ) {
-    if (coords.length < 2 || toVertex <= 0) {
-      return _haversineToPoint(
-          position, coords.isNotEmpty ? coords.last[0] : position.latitude,
-          coords.isNotEmpty ? coords.last[1] : position.longitude);
-    }
-
-    // Distance from the user to the end of their current segment.
-    final segEnd = (fromSegment + 1).clamp(0, coords.length - 1);
-    double total = Geolocator.distanceBetween(
-      position.latitude,
-      position.longitude,
-      coords[segEnd][0],
-      coords[segEnd][1],
-    );
-
-    // Plus the length of each subsequent segment up to the maneuver vertex.
-    for (int i = segEnd; i < toVertex && i < coords.length - 1; i++) {
-      total += Geolocator.distanceBetween(
-        coords[i][0],
-        coords[i][1],
-        coords[i + 1][0],
-        coords[i + 1][1],
-      );
-    }
-    return total;
   }
 
   // --- Guidance: periodic re-check (alignment + progress) -------------------
@@ -490,7 +452,6 @@ class NavigationService {
     _lastProgressPosition = _currentPosition;
 
     final steps = _currentRoute!.instructions;
-    final coords = _currentRoute!.coordinates;
     if (_currentStepIndex >= steps.length - 1) {
       final destDist = _distanceToDestination();
       if (destDist == null) return;
@@ -500,47 +461,78 @@ class NavigationService {
     }
 
     final next = steps[_currentStepIndex + 1];
-    final maneuverVertex = next.polylineIndex;
-    final dist = maneuverVertex >= 0
-        ? _distanceAlongRoute(
-            coords, _currentSegmentIndex, maneuverVertex, _currentPosition!)
-        : _haversineToPoint(_currentPosition!, next.lat, next.lng);
+    final dist = _haversineToPoint(_currentPosition!, next.lat, next.lng);
     _emit('Continue straight ahead for ${dist.toInt()} meters.');
   }
 
   /// Returns an alignment correction phrase, or null when on-course.
   ///
-  /// Path-relative: compares the (stable) heading to the bearing of the route
-  /// segment the user is currently on. Suppressed when the user is essentially
-  /// on the line (small lateral offset) so that walking along the edge of a
-  /// wide path does not trigger a spurious "turn slightly left".
+  /// Only corrects orientation when the user is essentially STATIONARY — while
+  /// walking, forward motion is its own confirmation, and nagging there caused
+  /// the false "turn to face the path" reports. The target is a look-ahead
+  /// point along the route (stable across maneuver vertices), and a small
+  /// hysteresis prevents rapid left/right flapping.
   String? _checkAlignment() {
-    // final heading = _currentHeading;
-    final heading = _stableHeading;
-    if (heading == null || _currentPosition == null || _currentRoute == null) {
+    final pos = _currentPosition;
+    if (pos == null || _currentRoute == null) return null;
+
+    if (pos.speed > _movingSpeed) {
+      _lastAlignDir = 0;
       return null;
     }
-    // Require a *stable* compass reading before trusting a correction.
+
+    final heading = _stableHeading;
+    if (heading == null) return null;
     if (!_headingFilter.isStable && _gpsHeading == null) return null;
 
-    final coords = _currentRoute!.coordinates;
-    final projection = projectOntoPolyline(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      coords,
-    );
-    if (projection == null) return null;
+    final desired = _desiredHeading();
+    if (desired == null) return null;
 
-    // If the user is basically on the path, do not nag about orientation.
-    if (projection.distanceMeters < _alignmentMinOffRouteMeters) {
-      final delta = angleDelta(heading, projection.segmentBearing);
-      if (delta.abs() < _alignmentDeadzoneDeg) return null;
+    final delta = angleDelta(heading, desired);
+    final absD = delta.abs();
+
+    // Aligned again -> clear hysteresis, no correction.
+    if (absD < _alignmentClearDeg) {
+      _lastAlignDir = 0;
+      return null;
     }
+    if (absD < _alignmentDeadzoneDeg) return null;
 
-    final delta = angleDelta(heading, projection.segmentBearing);
-    if (delta.abs() < _alignmentDeadzoneDeg) return null;
-
+    final dir = delta > 0 ? 1 : -1;
+    final now = DateTime.now();
+    // Suppress an immediate opposite correction (anti-oscillation) unless the
+    // user is badly misaligned (> 90 degrees).
+    if (_lastAlignDir != 0 &&
+        dir != _lastAlignDir &&
+        now.difference(_lastAlignAt) < _alignFlipGuard &&
+        absD < 90) {
+      return null;
+    }
+    _lastAlignDir = dir;
+    _lastAlignAt = now;
     return describeAlignmentCorrection(delta);
+  }
+
+  /// Desired heading: the bearing from the user toward a point a few meters
+  /// ahead along the route. Stable across maneuver vertices, so corrections
+  /// don't flip left/right at corners.
+  double? _desiredHeading() {
+    final pos = _currentPosition;
+    final route = _currentRoute;
+    if (pos == null || route == null) return null;
+    final coords = route.coordinates;
+    if (coords.length < 2) return null;
+    final proj = projectOntoPolyline(pos.latitude, pos.longitude, coords);
+    if (proj == null) return null;
+    final ahead = pointAheadOnPolyline(
+      coords,
+      proj.segmentIndex,
+      proj.snappedLat,
+      proj.snappedLng,
+      _lookAheadMeters,
+    );
+    if (ahead == null) return null;
+    return bearingBetween(pos.latitude, pos.longitude, ahead[0], ahead[1]);
   }
 
   String _maneuverPhrase(TurnByTurnStep next) {

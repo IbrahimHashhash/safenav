@@ -12,9 +12,9 @@ import 'dart:math' as math;
 ///     still.
 class HeadingFilter {
   HeadingFilter({
-    this.smoothingFactor = 0.25,
+    this.smoothingFactor = 0.35,
     this.stabilityToleranceDeg = 25.0,
-    this.requiredStableSamples = 3,
+    this.requiredStableSamples = 2,
     this.maxSampleAge = const Duration(seconds: 3),
   });
 

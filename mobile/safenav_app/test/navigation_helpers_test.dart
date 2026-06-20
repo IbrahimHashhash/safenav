@@ -2,6 +2,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:safenav_app/features/mapbox_navigation/application/navigation_helpers.dart';
 
 void main() {
+  group('pointAheadOnPolyline', () {
+    final coords = <List<double>>[
+      [31.9600, 35.1820],
+      [31.9600, 35.1830], // east segment (~95 m)
+      [31.9610, 35.1830], // north segment
+    ];
+
+    test('returns a point further along the route (east), bearing ~90', () {
+      final p = pointAheadOnPolyline(coords, 0, 31.9600, 35.1820, 10);
+      expect(p, isNotNull);
+      final b = bearingBetween(31.9600, 35.1820, p![0], p[1]);
+      expect(b, closeTo(90, 5));
+    });
+
+    test('crosses into the next segment for a longer look-ahead', () {
+      // Past the corner the route heads north, so the look-ahead bearing
+      // should be between east and north (not a 90° flip artifact).
+      final p = pointAheadOnPolyline(coords, 0, 31.9600, 35.1820, 130);
+      expect(p, isNotNull);
+      // The look-ahead point should be north of the corner latitude.
+      expect(p![0], greaterThan(31.9600));
+    });
+
+    test('clamps to the route end when the look-ahead exceeds the route', () {
+      final p = pointAheadOnPolyline(coords, 0, 31.9600, 35.1820, 100000);
+      expect(p, [31.9610, 35.1830]);
+    });
+  });
+
   group('projectOntoPolyline', () {
     // A simple route heading roughly east then turning north.
     final coords = <List<double>>[

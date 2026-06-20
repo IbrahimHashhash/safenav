@@ -213,6 +213,40 @@ int nearestVertexIndex(
   return bestIdx;
 }
 
+/// Returns a point [lat, lng] that is [aheadMeters] further along the polyline,
+/// starting from [snappedLat]/[snappedLng] on segment [segmentIndex].
+///
+/// Used to derive a STABLE "desired heading" target: aiming a few meters ahead
+/// along the route avoids the ~90° flip that the raw current-segment bearing
+/// suffers right at a maneuver vertex (which caused left/right oscillation).
+List<double>? pointAheadOnPolyline(
+  List<List<double>> coords,
+  int segmentIndex,
+  double snappedLat,
+  double snappedLng,
+  double aheadMeters,
+) {
+  if (coords.length < 2) return null;
+  var remaining = aheadMeters;
+  var curLat = snappedLat;
+  var curLng = snappedLng;
+  final start = segmentIndex.clamp(0, coords.length - 2);
+
+  for (int i = start; i < coords.length - 1; i++) {
+    final nLat = coords[i + 1][0];
+    final nLng = coords[i + 1][1];
+    final segLen = _haversineMeters(curLat, curLng, nLat, nLng);
+    if (segLen >= remaining) {
+      final f = segLen < 1e-9 ? 1.0 : remaining / segLen;
+      return [curLat + (nLat - curLat) * f, curLng + (nLng - curLng) * f];
+    }
+    remaining -= segLen;
+    curLat = nLat;
+    curLng = nLng;
+  }
+  return [coords.last[0], coords.last[1]];
+}
+
 double _haversineMeters(
   double lat1,
   double lng1,

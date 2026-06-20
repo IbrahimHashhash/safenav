@@ -24,11 +24,15 @@ class VoiceConstants {
   ];
 
   static const startNavigationTriggers = [
-    'start', 'begin', 'commence',
+    'start', 'begin', 'commence', 'enable', 'on',
   ];
 
   static const stopNavigationTriggers = [
-    'stop', 'cancel', 'end', 'quit', 'halt',
+    'stop', 'cancel', 'end', 'quit', 'halt', 'disable', 'off',
+  ];
+
+  static const detectionTriggers = [
+    'detection', 'obstacle', 'obstacles', 'detect',
   ];
 
   static const nextInstructionTriggers = [

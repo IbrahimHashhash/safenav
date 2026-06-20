@@ -7,6 +7,7 @@ import 'core/services/camera/camera_frame_source.dart';
 import 'features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
 import 'features/obstacle_avoidance/data/capture_log_service.dart';
 import 'features/obstacle_avoidance/application/obstacle_listener_service.dart';
+import 'features/voice_interaction/application/voice_assistant_service.dart';
 import 'features/voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import 'features/home/presentation/home_shell.dart';
 
@@ -23,6 +24,10 @@ void main() async {
     voiceCubit: voiceCubit,
     captureLog: sl<CaptureLogService>(),
   );
+
+  // Let voice commands ("start/stop detection") control the listener, and keep
+  // the dev-screen button in sync via the listener's streaming stream.
+  sl<VoiceAssistantService>().detectionController = obstacleListener;
 
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));
 }

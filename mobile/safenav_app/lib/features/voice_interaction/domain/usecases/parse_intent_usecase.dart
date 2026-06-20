@@ -10,6 +10,19 @@ class ParseIntentUseCase {
       return VoiceCommandType.nextInstruction;
     }
 
+    // Obstacle detection toggle (checked before navigation; its trigger words
+    // — "detection"/"obstacle" — do not overlap the navigate triggers).
+    final hasDetection =
+        _containsIntent(words, VoiceConstants.detectionTriggers);
+    if (hasDetection &&
+        _containsIntent(words, VoiceConstants.stopNavigationTriggers)) {
+      return VoiceCommandType.stopDetection;
+    }
+    if (hasDetection &&
+        _containsIntent(words, VoiceConstants.startNavigationTriggers)) {
+      return VoiceCommandType.startDetection;
+    }
+
     if (_containsIntent(words, VoiceConstants.stopNavigationTriggers) &&
         _containsIntent(words, VoiceConstants.navigateTriggers)) {
       return VoiceCommandType.stopNavigation;

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../shared/widgets/caption_card.dart';
-import '../../../shared/widgets/streaming_button.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_state.dart';
 import '../../voice_interaction/presentation/widgets/idle_view.dart';
@@ -10,19 +9,11 @@ import '../../voice_interaction/presentation/widgets/listening_view.dart';
 import '../../voice_interaction/presentation/widgets/processing_view.dart';
 import '../../voice_interaction/presentation/widgets/speaking_view.dart';
 
-/// User-facing screen: a full-screen push-to-talk surface, a streaming toggle
-/// at the top, and captions for the recognized input and the spoken reply.
+/// User-facing screen: a full-screen push-to-talk surface and captions for the
+/// recognized input and the spoken reply. Obstacle detection is controlled by
+/// voice ("start/stop detection") here — its button lives on the dev screen.
 class UserScreen extends StatefulWidget {
-  const UserScreen({
-    super.key,
-    required this.streaming,
-    required this.busy,
-    required this.onToggleStreaming,
-  });
-
-  final bool streaming;
-  final bool busy;
-  final VoidCallback onToggleStreaming;
+  const UserScreen({super.key});
 
   @override
   State<UserScreen> createState() => _UserScreenState();
@@ -62,24 +53,6 @@ class _UserScreenState extends State<UserScreen> {
                 behavior: HitTestBehavior.opaque,
                 onTap: () => _onVoiceTap(state),
                 child: _CenterView(state: state),
-              ),
-            ),
-
-            // Top: start/stop streaming frames to the server.
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: StreamingButton(
-                    streaming: widget.streaming,
-                    busy: widget.busy,
-                    onPressed: widget.onToggleStreaming,
-                  ),
-                ),
               ),
             ),
 

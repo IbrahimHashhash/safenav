@@ -3,6 +3,7 @@ import 'package:safenav_app/shared/models/location.dart';
 import '../../../core/services/profile/user_profile_service.dart';
 import '../../../core/utils/text_utils.dart';
 import '../../mapbox_navigation/application/navigation_service.dart';
+import '../../obstacle_avoidance/application/detection_controller.dart';
 import '../domain/entities/voice_command.dart';
 import '../domain/usecases/extract_location_usecase.dart';
 import '../domain/usecases/parse_intent_usecase.dart';
@@ -79,6 +80,10 @@ class VoiceCommandHandler {
   final NavigationService navigationService;
   final UserProfileService userProfile;
 
+  /// Controls obstacle detection (set after construction by the app wiring,
+  /// because the listener is created later with the voice cubit).
+  DetectionController? detection;
+
   VoiceCommandHandler({
     required this.parseIntent,
     required this.extractLocation,
@@ -94,6 +99,8 @@ class VoiceCommandHandler {
     VoiceCommandType.navigate,
     VoiceCommandType.startNavigation,
     VoiceCommandType.stopNavigation,
+    VoiceCommandType.startDetection,
+    VoiceCommandType.stopDetection,
     VoiceCommandType.listLocations,
     VoiceCommandType.moreInfo,
     VoiceCommandType.nextInstruction,
@@ -151,6 +158,14 @@ class VoiceCommandHandler {
       return SpeechRequest(message, SpeechPriority.assistant);
     }
 
+    if (intent == VoiceCommandType.startDetection) {
+      return _startDetection();
+    }
+
+    if (intent == VoiceCommandType.stopDetection) {
+      return _stopDetection();
+    }
+
     if (intent == VoiceCommandType.listLocations) {
       final category = extractLocation.extractCategory(text);
       return SpeechRequest(
@@ -166,6 +181,45 @@ class VoiceCommandHandler {
         ? 'Sorry ${userProfile.name}, I didn\'t understand that'
         : 'Sorry, I didn\'t understand that';
     return SpeechRequest(sorry, SpeechPriority.assistant);
+  }
+
+  Future<SpeechRequest> _startDetection() async {
+    final controller = detection;
+    if (controller == null) {
+      return const SpeechRequest(
+        'Obstacle detection is not available.',
+        SpeechPriority.assistant,
+      );
+    }
+    if (controller.isDetecting) {
+      return const SpeechRequest(
+        'Obstacle detection is already on.',
+        SpeechPriority.assistant,
+      );
+    }
+    final started = await controller.startDetection();
+    return SpeechRequest(
+      started
+          ? 'Obstacle detection started.'
+          : 'Could not start obstacle detection. '
+              'Check the camera and your internet connection.',
+      SpeechPriority.assistant,
+    );
+  }
+
+  Future<SpeechRequest> _stopDetection() async {
+    final controller = detection;
+    if (controller == null || !controller.isDetecting) {
+      return const SpeechRequest(
+        'Obstacle detection is not on.',
+        SpeechPriority.assistant,
+      );
+    }
+    await controller.stopDetection();
+    return const SpeechRequest(
+      'Obstacle detection stopped.',
+      SpeechPriority.assistant,
+    );
   }
 
   SpeechRequest _greet() {

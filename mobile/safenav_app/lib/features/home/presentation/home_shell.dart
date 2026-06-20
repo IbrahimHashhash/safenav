@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -23,14 +25,26 @@ class _HomeShellState extends State<HomeShell> {
   bool _devMode = false;
   bool _streaming = false;
   bool _togglingStream = false;
+  StreamSubscription<bool>? _streamingSub;
 
   @override
   void initState() {
     super.initState();
     context.read<VoiceAssistantCubit>().initialize();
     _streaming = widget.obstacleListener.isStreaming;
+    // Keep the button in sync when detection is toggled by VOICE or stopped by
+    // a network drop.
+    _streamingSub = widget.obstacleListener.streamingChanges.listen((on) {
+      if (mounted) setState(() => _streaming = on);
+    });
     // User screen does not need preview images.
     widget.obstacleListener.setPreviewsEnabled(false);
+  }
+
+  @override
+  void dispose() {
+    _streamingSub?.cancel();
+    super.dispose();
   }
 
   void _toggleScreen() {
@@ -101,11 +115,7 @@ class _HomeShellState extends State<HomeShell> {
                 busy: _togglingStream,
                 onToggleStreaming: _toggleStreaming,
               )
-            : UserScreen(
-                streaming: _streaming,
-                busy: _togglingStream,
-                onToggleStreaming: _toggleStreaming,
-              ),
+            : const UserScreen(),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:audioplayers/audioplayers.dart';
 import '../../mapbox_navigation/application/navigation_service.dart';
+import '../../obstacle_avoidance/application/detection_controller.dart';
 import '../../../core/services/profile/user_profile_service.dart';
 import '../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../core/services/speech_to_text/stt_service.dart';
@@ -66,6 +67,12 @@ class VoiceAssistantService {
   }
 
   Future<void> initialize() => _sttService.initialize();
+
+  /// Attaches the obstacle-detection controller so voice commands can toggle
+  /// detection. Wired after the listener is constructed.
+  set detectionController(DetectionController controller) {
+    _commandHandler.detection = controller;
+  }
 
   Future<void> speakObstacleInstruction(String text) async {
     if (text.trim().isEmpty) return;

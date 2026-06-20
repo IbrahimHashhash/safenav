@@ -8,6 +8,7 @@ import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../data/capture_log_service.dart';
 import '../data/datasources/navigation_ws_datasource.dart';
 import '../domain/entities/detection_result.dart';
+import 'detection_controller.dart';
 
 /// Outcome of attempting to start streaming, so the UI can show a precise
 /// message about what went wrong.
@@ -20,7 +21,7 @@ enum StreamStartResult { started, serverUnreachable, cameraUnavailable }
 /// Also: re-publishes the full [DetectionResult] stream (dev screen), supports
 /// single-shot captures that persist the frame + metrics, and measures
 /// end-to-end latency from frame capture to response.
-class ObstacleListenerService {
+class ObstacleListenerService implements DetectionController {
   ObstacleListenerService({
     required this.datasource,
     required this.cameraSource,
@@ -50,6 +51,10 @@ class ObstacleListenerService {
   /// while the car stays close.
   static const Duration _vibrationCooldown = Duration(seconds: 3);
 
+  /// On a network drop, try to reconnect for up to this long before giving up.
+  static const Duration _reconnectBudget = Duration(seconds: 4);
+  static const Duration _reconnectRetryGap = Duration(milliseconds: 500);
+
   DateTime _lastVibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   StreamSubscription<DetectionResult>? _subscription;
@@ -77,6 +82,8 @@ class ObstacleListenerService {
       StreamController<DetectionResult>.broadcast();
   final StreamController<String> _captureEventsController =
       StreamController<String>.broadcast();
+  final StreamController<bool> _streamingController =
+      StreamController<bool>.broadcast();
   DetectionResult? _lastResult;
 
   /// The most recent JPEG frame sent to the server (clean, no overlays), used
@@ -89,12 +96,33 @@ class ObstacleListenerService {
   /// Human-readable messages about saved captures (for snackbars).
   Stream<String> get captureEvents => _captureEventsController.stream;
 
+  /// Emits whenever streaming turns on (true) / off (false), including when
+  /// toggled by voice or stopped by a network drop, so the UI button stays in
+  /// sync.
+  Stream<bool> get streamingChanges => _streamingController.stream;
+
   DetectionResult? get lastResult => _lastResult;
 
   bool get isStreaming => _running;
   String get serverUrl => datasource.url;
 
+  // --- DetectionController (used by the voice command handler) -------------
+
+  @override
+  bool get isDetecting => _running;
+
+  @override
+  Future<bool> startDetection() async =>
+      (await start()) == StreamStartResult.started;
+
+  @override
+  Future<void> stopDetection() => stop();
+
   void setPreviewsEnabled(bool enabled) => _previewsEnabled = enabled;
+
+  void _emitStreaming(bool value) {
+    if (!_streamingController.isClosed) _streamingController.add(value);
+  }
 
   void _ensureSubscribed() {
     _subscription ??= datasource.stream.listen(_onResult);
@@ -134,6 +162,7 @@ class ObstacleListenerService {
     }
 
     _running = true;
+    _emitStreaming(true);
     unawaited(_captureLoop());
     return StreamStartResult.started;
   }
@@ -177,7 +206,22 @@ class ObstacleListenerService {
     while (_running) {
       final stopwatch = Stopwatch()..start();
 
-      if (!datasource.isConnected || !cameraSource.isReady) {
+      if (!datasource.isConnected) {
+        // Network drop while the user wants detection: try to recover.
+        final resumed = await _awaitReconnect();
+        if (!_running) break;
+        if (resumed) {
+          voiceCubit.speakObstacleInstruction(
+              'Back online. Obstacle detection resumed.');
+          continue;
+        }
+        voiceCubit.speakObstacleInstruction(
+            'Obstacle detection stopped because the internet disconnected.');
+        await stop();
+        break;
+      }
+
+      if (!cameraSource.isReady) {
         await Future<void>.delayed(_framePeriod);
         continue;
       }
@@ -219,6 +263,16 @@ class ObstacleListenerService {
         await Future<void>.delayed(Duration(milliseconds: remaining));
       }
     }
+  }
+
+  /// Tries to reconnect within [_reconnectBudget]. Returns true if reconnected.
+  Future<bool> _awaitReconnect() async {
+    final deadline = DateTime.now().add(_reconnectBudget);
+    while (_running && DateTime.now().isBefore(deadline)) {
+      if (await datasource.connect()) return true;
+      await Future<void>.delayed(_reconnectRetryGap);
+    }
+    return datasource.isConnected;
   }
 
   void _onResult(DetectionResult result) {
@@ -329,14 +383,17 @@ class ObstacleListenerService {
   }
 
   Future<void> stop() async {
+    final wasRunning = _running;
     await _teardown();
     await datasource.disconnect();
     await cameraSource.dispose();
+    if (wasRunning) _emitStreaming(false);
   }
 
   void dispose() {
     stop();
     _resultsController.close();
     _captureEventsController.close();
+    _streamingController.close();
   }
 }

@@ -69,5 +69,56 @@ void main() {
       tts.finishCurrent();
       expect(tts.spoken, ['speaking', 'obstacle', 'nav']);
     });
+
+    test('clearNonAssistant stops current guidance and drops queued guidance',
+        () async {
+      final tts = _FakeTts();
+      final queue = SpeechQueue(
+        ttsService: tts,
+        onSpeaking: (_) {},
+        onIdle: () {},
+      );
+      await queue.enqueue(const SpeechRequest('obs1', SpeechPriority.obstacle));
+      // queue a navigation line behind it
+      await queue.enqueue(const SpeechRequest('nav1', SpeechPriority.navigation));
+
+      await queue.clearNonAssistant();
+      // current obstacle stopped, queued nav dropped, nothing else spoken.
+      expect(tts.spoken, ['obs1']);
+      tts.finishCurrent(); // no-op; nothing queued
+      expect(tts.spoken, ['obs1']);
+    });
+
+    test('clearNonAssistant keeps a currently-speaking assistant reply', () async {
+      final tts = _FakeTts();
+      final queue = SpeechQueue(
+        ttsService: tts,
+        onSpeaking: (_) {},
+        onIdle: () {},
+      );
+      await queue.enqueue(const SpeechRequest('reply', SpeechPriority.assistant));
+      await queue.clearNonAssistant();
+      expect(tts.spoken, ['reply']); // untouched, still current
+    });
+
+    test('onDone fires when a request finishes or is skipped', () async {
+      final tts = _FakeTts();
+      final queue = SpeechQueue(
+        ttsService: tts,
+        onSpeaking: (_) {},
+        onIdle: () {},
+      );
+      var doneA = 0;
+      var doneB = 0;
+      await queue.enqueue(
+          SpeechRequest('A', SpeechPriority.assistant, onDone: () => doneA++));
+      tts.finishCurrent();
+      expect(doneA, 1);
+
+      await queue.enqueue(
+          SpeechRequest('B', SpeechPriority.assistant, onDone: () => doneB++));
+      await queue.skipCurrent();
+      expect(doneB, 1);
+    });
   });
 }

@@ -9,7 +9,12 @@ enum SpeechPriority {
 class SpeechRequest {
   final String text;
   final SpeechPriority priority;
-  const SpeechRequest(this.text, this.priority);
+
+  /// Called once when this request finishes speaking OR is skipped. Used to
+  /// know when an assistant reply is done (to end the conversation window).
+  final void Function()? onDone;
+
+  const SpeechRequest(this.text, this.priority, {this.onDone});
 }
 
 class SpeechQueue {
@@ -31,8 +36,7 @@ class SpeechQueue {
   Future<void> enqueue(SpeechRequest incoming) async {
     // Obstacle and navigation guidance is only useful when fresh. Keep at most
     // the newest pending request of that kind so the TTS never works through a
-    // backlog of stale instructions (e.g. warning about a chair that has since
-    // left the frame).
+    // backlog of stale instructions.
     if (incoming.priority == SpeechPriority.navigation ||
         incoming.priority == SpeechPriority.obstacle) {
       _queue.removeWhere((r) => r.priority == incoming.priority);
@@ -56,14 +60,34 @@ class SpeechQueue {
   }
 
   Future<void> skipCurrent() async {
-    if (_currentRequest == null) return;
+    final current = _currentRequest;
+    if (current == null) return;
     await ttsService.stop();
     _currentRequest = null;
+    current.onDone?.call();
     if (_queue.isEmpty) {
       onIdle();
       return;
     }
     await _speakNow(_queue.removeAt(0));
+  }
+
+  /// Stops any currently-speaking obstacle/navigation line and drops queued
+  /// ones, leaving assistant speech untouched. Used when a conversation starts
+  /// so guidance never talks over the user.
+  Future<void> clearNonAssistant() async {
+    _queue.removeWhere((r) => r.priority != SpeechPriority.assistant);
+    final current = _currentRequest;
+    if (current != null && current.priority != SpeechPriority.assistant) {
+      await ttsService.stop();
+      _currentRequest = null;
+      current.onDone?.call();
+      if (_queue.isNotEmpty) {
+        await _speakNow(_queue.removeAt(0));
+      } else {
+        onIdle();
+      }
+    }
   }
 
   Future<void> _speakNow(SpeechRequest request) async {
@@ -73,7 +97,9 @@ class SpeechQueue {
   }
 
   void _onComplete() {
+    final done = _currentRequest?.onDone;
     _currentRequest = null;
+    done?.call();
     if (_queue.isEmpty) {
       onIdle();
       return;

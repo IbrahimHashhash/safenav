@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart' show HapticFeedback;
+
 import '../../../core/services/camera/camera_frame_source.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../data/capture_log_service.dart';
@@ -35,7 +37,20 @@ class ObstacleListenerService {
   static final Duration _framePeriod =
       Duration(milliseconds: (1000 / _targetFps).round());
   static const Duration _responseTimeout = Duration(seconds: 2);
-  static const Duration _repeatCooldown = Duration(seconds: 4);
+
+  /// Suppress an identical, unchanged spoken instruction (e.g. "path clear")
+  /// for this long so it isn't repeated every couple of seconds.
+  static const Duration _repeatCooldown = Duration(seconds: 6);
+
+  /// A car closer than this (meters) is treated as an imminent collision and
+  /// triggers a single vibration.
+  static const double _carCollisionDistanceM = 2.0;
+
+  /// Minimum gap between collision vibrations so it doesn't buzz continuously
+  /// while the car stays close.
+  static const Duration _vibrationCooldown = Duration(seconds: 3);
+
+  DateTime _lastVibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   StreamSubscription<DetectionResult>? _subscription;
   bool _running = false;
@@ -231,6 +246,8 @@ class ObstacleListenerService {
       _resultsController.add(result);
     }
 
+    _maybeVibrateForCar(result);
+
     final awaiting = _awaitingFrameId;
     if (awaiting != null && result.frameId >= awaiting) {
       final waiter = _responseWaiter;
@@ -238,6 +255,26 @@ class ObstacleListenerService {
     }
 
     _maybeSpeak(result.instruction);
+  }
+
+  /// Single vibration when a CAR is very close (imminent collision / path
+  /// blocking). Debounced so it doesn't buzz continuously.
+  void _maybeVibrateForCar(DetectionResult result) {
+    final now = DateTime.now();
+    if (now.difference(_lastVibrationAt) < _vibrationCooldown) return;
+
+    final imminentCar = result.obstacles.any((o) =>
+        o.label.toLowerCase().contains('car') &&
+        o.distanceMeters != null &&
+        o.distanceMeters! <= _carCollisionDistanceM);
+    if (!imminentCar) return;
+
+    _lastVibrationAt = now;
+    try {
+      HapticFeedback.vibrate();
+    } catch (_) {
+      // No haptics available; ignore.
+    }
   }
 
   Future<void> _saveCapture(Uint8List jpeg, DetectionResult result) async {

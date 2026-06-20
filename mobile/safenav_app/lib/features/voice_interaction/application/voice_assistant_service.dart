@@ -26,7 +26,15 @@ class VoiceAssistantService {
   String _lastInstruction = '';
   bool _isPressActive = false;
   bool _hasHandledCommand = false;
-  final List<SpeechRequest> _deferredWhileListening = [];
+
+  /// While true, the user is in a conversation with the assistant (from the
+  /// moment listening starts until the assistant's reply finishes speaking).
+  /// Navigation/obstacle guidance is DROPPED during this window so nothing
+  /// interrupts the user or the reply. Guarded by a token so a stale reply
+  /// completion can't end a newer conversation.
+  bool _conversationActive = false;
+  int _conversationId = 0;
+
   Future<void> _sttQueue = Future<void>.value();
 
   void Function(VoiceAssistantState)? onStateChange;
@@ -61,35 +69,24 @@ class VoiceAssistantService {
 
   Future<void> speakObstacleInstruction(String text) async {
     if (text.trim().isEmpty) return;
-    await _enqueueOrDefer(SpeechRequest(text, SpeechPriority.obstacle));
+    await _enqueueGuidance(SpeechRequest(text, SpeechPriority.obstacle));
   }
 
   Future<void> speakNavigationInstruction(String text) async {
     if (text.trim().isEmpty) return;
-    await _enqueueOrDefer(SpeechRequest(text, SpeechPriority.navigation));
+    await _enqueueGuidance(SpeechRequest(text, SpeechPriority.navigation));
   }
 
-  Future<void> _enqueueOrDefer(SpeechRequest request) async {
-    if (_isPressActive) {
-      // Keep only the latest navigation/obstacle request while listening, so
-      // we don't flush a backlog of stale guidance when listening ends.
-      if (request.priority == SpeechPriority.navigation ||
-          request.priority == SpeechPriority.obstacle) {
-        _deferredWhileListening
-            .removeWhere((r) => r.priority == request.priority);
-      }
-      _deferredWhileListening.add(request);
-      return;
-    }
+  /// Guidance (obstacle/navigation) is DROPPED while the user is conversing
+  /// with the assistant, so it never interrupts the command or the reply.
+  Future<void> _enqueueGuidance(SpeechRequest request) async {
+    if (_conversationActive) return;
     await _speechQueue.enqueue(request);
   }
 
-  Future<void> _flushDeferred() async {
-    if (_deferredWhileListening.isEmpty) return;
-    final pending = List<SpeechRequest>.from(_deferredWhileListening);
-    _deferredWhileListening.clear();
-    for (final request in pending) {
-      await _speechQueue.enqueue(request);
+  void _endConversation([int? id]) {
+    if (id == null || id == _conversationId) {
+      _conversationActive = false;
     }
   }
 
@@ -98,6 +95,12 @@ class VoiceAssistantService {
 
     _isPressActive = true;
     _hasHandledCommand = false;
+    // Open a fresh conversation window and silence any guidance currently
+    // playing so it never talks over the user.
+    _conversationId++;
+    _conversationActive = true;
+    await _speechQueue.clearNonAssistant();
+
     await _cueListeningStarted();
     if (!_isPressActive) return;
 
@@ -110,7 +113,6 @@ class VoiceAssistantService {
             _isPressActive = false;
             _hasHandledCommand = true;
             _runStt(() => _sttService.stopListening()).then((_) {
-              _flushDeferred();
               _handleRecognizedText(text);
             });
           }
@@ -137,9 +139,8 @@ class VoiceAssistantService {
     _isPressActive = false;
     _hasHandledCommand = true;
     await _runStt(() => _sttService.stopListening());
-    final hadDeferred = _deferredWhileListening.isNotEmpty;
-    _flushDeferred();
-    if (!hadDeferred) onStateChange?.call(VoiceIdle());
+    _endConversation();
+    onStateChange?.call(VoiceIdle());
   }
 
   void _onSttTimeout() {
@@ -147,12 +148,11 @@ class VoiceAssistantService {
     _isPressActive = false;
 
     final text = (_sttService as FlutterSttService).lastText;
-    final hadDeferred = _deferredWhileListening.isNotEmpty;
-    _flushDeferred();
     if (text.isNotEmpty) {
       _hasHandledCommand = true;
       _handleRecognizedText(text);
-    } else if (!hadDeferred) {
+    } else {
+      _endConversation();
       onStateChange?.call(VoiceIdle());
     }
   }
@@ -160,9 +160,8 @@ class VoiceAssistantService {
   void _onSttError(String message) {
     if (!_isPressActive) return;
     _isPressActive = false;
-    final hadDeferred = _deferredWhileListening.isNotEmpty;
-    _flushDeferred();
-    if (!hadDeferred) onStateChange?.call(VoiceError(message));
+    _endConversation();
+    onStateChange?.call(VoiceError(message));
   }
 
   Future<void> stopSpeaking() => _speechQueue.skipCurrent();
@@ -170,6 +169,7 @@ class VoiceAssistantService {
   Future<void> _handleRecognizedText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
+      _endConversation();
       _emitIdleIfQuiet();
       return;
     }
@@ -179,10 +179,9 @@ class VoiceAssistantService {
 
     if (_parseIntent(trimmed) == VoiceCommandType.repeat) {
       if (_lastInstruction.isNotEmpty) {
-        await _speechQueue.enqueue(
-          SpeechRequest(_lastInstruction, SpeechPriority.assistant),
-        );
+        await _speakReply(_lastInstruction);
       } else {
+        _endConversation();
         _emitIdleIfQuiet();
       }
       return;
@@ -190,12 +189,26 @@ class VoiceAssistantService {
 
     final request = await _commandHandler.handle(trimmed);
     if (request.text.isEmpty) {
+      _endConversation();
       _emitIdleIfQuiet();
       return;
     }
 
-    _lastInstruction = request.text;
-    await _speechQueue.enqueue(request);
+    await _speakReply(request.text);
+  }
+
+  /// Speaks the assistant's reply and ends the conversation window once the
+  /// reply has finished (so guidance resumes only after the user is answered).
+  Future<void> _speakReply(String text) async {
+    _lastInstruction = text;
+    final id = _conversationId;
+    await _speechQueue.enqueue(
+      SpeechRequest(
+        text,
+        SpeechPriority.assistant,
+        onDone: () => _endConversation(id),
+      ),
+    );
   }
 
   void _emitIdleIfQuiet() {

@@ -153,7 +153,8 @@ class ObstacleListenerService {
     _captureStartedAt[id] = captureStart;
     _captureBytes[id] = jpeg;
     _lastFrameJpeg = jpeg;
-    datasource.sendFrame(jpeg, id, includePreviews: _previewsEnabled);
+    // Always request previews for a capture so they can be saved with the frame.
+    datasource.sendFrame(jpeg, id, includePreviews: true);
     return null;
   }
 
@@ -174,7 +175,8 @@ class ObstacleListenerService {
         _lastFrameJpeg = jpeg;
         final id = _frameId++;
         _captureStartedAt[id] = captureStart;
-        if (_saveNextFrame) {
+        final saveThisFrame = _saveNextFrame;
+        if (saveThisFrame) {
           _captureBytes[id] = jpeg;
           _saveNextFrame = false;
         }
@@ -183,7 +185,13 @@ class ObstacleListenerService {
         _awaitingFrameId = id;
         _responseWaiter = waiter;
 
-        datasource.sendFrame(jpeg, id, includePreviews: _previewsEnabled);
+        // Request previews when the dev screen wants them, or when this frame
+        // is being captured (so its previews are saved with it).
+        datasource.sendFrame(
+          jpeg,
+          id,
+          includePreviews: _previewsEnabled || saveThisFrame,
+        );
 
         await waiter.future.timeout(_responseTimeout, onTimeout: () {});
         _responseWaiter = null;
@@ -239,8 +247,13 @@ class ObstacleListenerService {
         result: result,
         capturedAt: DateTime.now(),
       );
+      final previews =
+          record.previewCount > 0 ? ' + ${record.previewCount} previews' : '';
+      final gallery = record.gallerySaved > 0
+          ? ' · ${record.gallerySaved} saved to gallery'
+          : '';
       _emitCaptureEvent('Saved frame #${record.frameId} '
-          '(${record.imageFileName})');
+          '(${record.imageFileName})$previews$gallery');
     } catch (e) {
       _emitCaptureEvent('Failed to save capture: $e');
     }

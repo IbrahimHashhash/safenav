@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/services/gallery/gallery_saver.dart';
 import '../domain/entities/detection_result.dart';
 
 /// Metadata returned after a capture is persisted.
@@ -11,10 +12,18 @@ class CaptureRecord {
   final String imagePath;
   final String csvPath;
 
+  /// Number of model preview images saved alongside the frame.
+  final int previewCount;
+
+  /// Number of images (frame + previews) also saved to the device gallery.
+  final int gallerySaved;
+
   const CaptureRecord({
     required this.frameId,
     required this.imagePath,
     required this.csvPath,
+    this.previewCount = 0,
+    this.gallerySaved = 0,
   });
 
   String get imageFileName => imagePath.split(Platform.pathSeparator).last;
@@ -75,9 +84,19 @@ String buildCaptureCsvRow(
   return fields.join(',');
 }
 
-/// Persists captured frames (the JPEG itself) and their metrics to a CSV in the
-/// app documents directory, for later inspection. Preview images are not saved.
+/// Persists captured frames (the JPEG itself plus the model preview images,
+/// when present) and their metrics to a CSV in the app documents directory,
+/// for later inspection.
 class CaptureLogService {
+  CaptureLogService({this.gallery});
+
+  /// Test seam: use a fixed directory instead of the platform documents dir.
+  CaptureLogService.forDirectory(Directory dir, {this.gallery}) : _dir = dir;
+
+  /// Optional gallery saver; when set, captures are also copied to the device
+  /// gallery so they are viewable in the Photos app.
+  final GallerySaver? gallery;
+
   Directory? _dir;
 
   Future<Directory> _ensureDir() async {
@@ -100,7 +119,8 @@ class CaptureLogService {
   /// Whether the CSV log exists yet (i.e. at least one capture was saved).
   Future<bool> csvExists() async => File(await csvPath()).exists();
 
-  /// Saves the frame JPEG and appends a metrics row to `captures.csv`.
+  /// Saves the frame JPEG, any attached model previews, and appends a metrics
+  /// row to `captures.csv`.
   Future<CaptureRecord> save({
     required Uint8List frameJpeg,
     required DetectionResult result,
@@ -112,9 +132,38 @@ class CaptureLogService {
         .toIso8601String()
         .replaceAll(':', '-')
         .replaceAll('.', '-');
-    final imageName = 'frame_${result.frameId}_$stamp.jpg';
+    final base = 'frame_${result.frameId}_$stamp';
+    final imageName = '$base.jpg';
     final imageFile = File('${dir.path}/$imageName');
     await imageFile.writeAsBytes(frameJpeg, flush: true);
+
+    var gallerySaved = 0;
+    Future<void> toGallery(String name, Uint8List bytes) async {
+      if (gallery == null) return;
+      try {
+        await gallery!.saveImage(bytes, name: name);
+        gallerySaved++;
+      } catch (_) {
+        // Gallery save is best-effort; the local file copy already succeeded.
+      }
+    }
+
+    await toGallery(base, frameJpeg);
+
+    // Save whatever model previews came back with this frame.
+    var previewCount = 0;
+    Future<void> writePreview(String suffix, Uint8List? bytes, String ext) async {
+      if (bytes == null || bytes.isEmpty) return;
+      await File('${dir.path}/${base}_$suffix.$ext')
+          .writeAsBytes(bytes, flush: true);
+      previewCount++;
+      await toGallery('${base}_$suffix', bytes);
+    }
+
+    await writePreview('yolo', result.yoloPreview, 'jpg');
+    await writePreview('depth', result.depthPreview, 'jpg');
+    await writePreview('seg', result.segPreview, 'jpg');
+    await writePreview('mask', result.maskPreview, 'png');
 
     final csv = File('${dir.path}/captures.csv');
     if (!await csv.exists()) {
@@ -129,6 +178,8 @@ class CaptureLogService {
       frameId: result.frameId,
       imagePath: imageFile.path,
       csvPath: csv.path,
+      previewCount: previewCount,
+      gallerySaved: gallerySaved,
     );
   }
 }

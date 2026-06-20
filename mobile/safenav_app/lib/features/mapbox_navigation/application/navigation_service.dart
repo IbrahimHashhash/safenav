@@ -12,6 +12,10 @@ import '../domain/entities/navigation_snapshot.dart';
 import '../domain/entities/route_entity.dart';
 import '../domain/usecases/get_route_usecase.dart';
 
+/// Which directions API generates the route. The post-processing engine is the
+/// same for both — only the route geometry/maneuvers come from a different API.
+enum NavProvider { mapbox, google }
+
 /// Pedestrian turn-by-turn navigation engine.
 ///
 /// The post-processing (route model, turn classification, distances,
@@ -30,9 +34,12 @@ class NavigationService {
   /// is stationary and only rotating.
   static const Duration _compassEvalInterval = Duration(milliseconds: 300);
 
-  final GetRouteUseCase _getRoute;
+  final GetRouteUseCase _getRouteMapbox;
+  final GetRouteUseCase _getRouteGoogle;
   final CompassService _compass;
   final void Function(String) _onInstruction;
+
+  NavProvider _provider;
 
   // Route + engine.
   RouteEntity? _currentRoute; // kept for the map polyline / snapshot
@@ -61,17 +68,27 @@ class NavigationService {
   NavigationSnapshot _snapshot = NavigationSnapshot.idle;
 
   NavigationService({
-    required GetRouteUseCase getRoute,
+    required GetRouteUseCase getRouteMapbox,
+    required GetRouteUseCase getRouteGoogle,
     required CompassService compass,
     required void Function(String) onInstruction,
-  })  : _getRoute = getRoute,
+    NavProvider initialProvider = NavProvider.mapbox,
+  })  : _getRouteMapbox = getRouteMapbox,
+        _getRouteGoogle = getRouteGoogle,
         _compass = compass,
-        _onInstruction = onInstruction;
+        _onInstruction = onInstruction,
+        _provider = initialProvider;
+
+  GetRouteUseCase _getRouteFor(NavProvider p) =>
+      p == NavProvider.google ? _getRouteGoogle : _getRouteMapbox;
 
   // --- Public API -----------------------------------------------------------
 
   bool get isNavigating => _isNavigating;
   bool get hasRoute => _currentRoute != null;
+
+  /// Active route provider (Mapbox or Google).
+  NavProvider get provider => _provider;
 
   Stream<NavigationSnapshot> get snapshots => _snapshotController.stream;
   NavigationSnapshot get currentSnapshot => _snapshot;
@@ -79,7 +96,7 @@ class NavigationService {
   Future<String> buildRoute(Location destination) async {
     final position = await _getCurrentLocation();
 
-    final route = await _getRoute(
+    final route = await _getRouteFor(_provider)(
       sourceLat: position.latitude,
       sourceLng: position.longitude,
       destLat: destination.latitude,
@@ -154,6 +171,44 @@ class NavigationService {
   void dispose() {
     _stopSensors();
     _snapshotController.close();
+  }
+
+  /// Switches the directions provider. If a destination is active, the route is
+  /// re-fetched from the current position via the new provider (and, while
+  /// navigating, the engine is rebuilt so guidance continues seamlessly). The
+  /// post-processing/orientation behaviour is identical for both providers.
+  /// Returns null on success, or an error message.
+  Future<String?> setProvider(NavProvider next) async {
+    if (next == _provider) return null;
+    _provider = next;
+
+    final dest = _currentDestination;
+    final pos = _currentPosition;
+    if (dest == null || pos == null) {
+      // No active route: the new provider applies to the next "navigate to".
+      _publishSnapshot();
+      return null;
+    }
+
+    try {
+      final route = await _getRouteFor(_provider)(
+        sourceLat: pos.latitude,
+        sourceLng: pos.longitude,
+        destLat: dest.latitude,
+        destLng: dest.longitude,
+      );
+      _currentRoute = route;
+      _routePath = _buildRoutePath(route);
+      _consecutiveOffRouteFixes = 0;
+      if (_isNavigating) {
+        _engine = _routePath == null ? null : NavEngine(_routePath!);
+      }
+      _distanceToDestination = _routePath?.totalLength;
+      _publishSnapshot();
+      return null;
+    } catch (_) {
+      return 'Failed to switch route provider.';
+    }
   }
 
   // --- Sensors --------------------------------------------------------------
@@ -260,7 +315,7 @@ class NavigationService {
     _speak('You are off the route. Recalculating.');
 
     try {
-      final newRoute = await _getRoute(
+      final newRoute = await _getRouteFor(_provider)(
         sourceLat: pos.latitude,
         sourceLng: pos.longitude,
         destLat: dest.latitude,

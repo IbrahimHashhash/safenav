@@ -8,6 +8,7 @@
 
 #include <audioplayers_windows/audioplayers_windows_plugin.h>
 #include <flutter_tts/flutter_tts_plugin.h>
+#include <gal/gal_plugin_c_api.h>
 #include <geolocator_windows/geolocator_windows.h>
 #include <permission_handler_windows/permission_handler_windows_plugin.h>
 #include <record_windows/record_windows_plugin_c_api.h>
@@ -19,6 +20,8 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("AudioplayersWindowsPlugin"));
   FlutterTtsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("FlutterTtsPlugin"));
+  GalPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("GalPluginCApi"));
   GeolocatorWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("GeolocatorWindows"));
   PermissionHandlerWindowsPluginRegisterWithRegistrar(

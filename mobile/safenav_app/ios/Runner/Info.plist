@@ -80,5 +80,7 @@
 	<string>SafeNav uses motion sensors to determine the direction you are facing while navigating.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>SafeNav uses the camera to detect obstacles in your path and warn you about them.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>SafeNav saves captured frames and detection previews to your photo library so you can review them.</string>
 </dict>
 </plist>

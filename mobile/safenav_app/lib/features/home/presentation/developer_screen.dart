@@ -7,6 +7,8 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../../shared/widgets/caption_card.dart';
 import '../../../shared/widgets/streaming_button.dart';
+import '../../../core/di/injection.dart';
+import '../../mapbox_navigation/application/navigation_service.dart';
 import '../../mapbox_navigation/presentation/widgets/navigation_map_view.dart';
 import '../../obstacle_avoidance/application/obstacle_listener_service.dart';
 import '../../obstacle_avoidance/domain/entities/detection_result.dart';
@@ -48,6 +50,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   DetectionResult? _result;
   bool _capturing = false;
   String? _capturesDir;
+  NavProvider _navProvider = NavProvider.mapbox;
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -75,6 +78,21 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     widget.listener.captureLog.directoryPath().then((path) {
       if (mounted) setState(() => _capturesDir = path);
     });
+    _navProvider = sl<NavigationService>().provider;
+  }
+
+  Future<void> _setNavProvider(NavProvider provider) async {
+    if (provider == _navProvider) return;
+    setState(() => _navProvider = provider);
+    final error = await sl<NavigationService>().setProvider(provider);
+    if (!mounted) return;
+    final name = provider == NavProvider.google ? 'Google' : 'Mapbox';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'Navigation provider: $name'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -221,12 +239,19 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
               _section(
                 icon: Icons.map,
                 title: 'Map & current location',
-                child: SizedBox(
-                  height: 240,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: const NavigationMapView(showCoordinates: true),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _navProviderToggle(),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 240,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: const NavigationMapView(showCoordinates: true),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 14),
@@ -415,6 +440,32 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // --- Navigation provider toggle ------------------------------------------
+
+  Widget _navProviderToggle() {
+    return Row(
+      children: [
+        const Icon(Icons.alt_route, size: 18, color: Colors.white70),
+        const SizedBox(width: 8),
+        const Text('Provider',
+            style: TextStyle(color: Colors.white70, fontSize: 13)),
+        const Spacer(),
+        SegmentedButton<NavProvider>(
+          segments: const [
+            ButtonSegment(
+                value: NavProvider.mapbox, label: Text('Mapbox')),
+            ButtonSegment(
+                value: NavProvider.google, label: Text('Google')),
+          ],
+          selected: {_navProvider},
+          showSelectedIcon: false,
+          onSelectionChanged: (s) => _setNavProvider(s.first),
+          style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        ),
+      ],
     );
   }
 

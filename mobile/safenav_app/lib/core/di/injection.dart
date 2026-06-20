@@ -8,6 +8,7 @@ import '../../features/voice_interaction/domain/usecases/extract_location_usecas
 import '../../features/voice_interaction/domain/usecases/parse_intent_usecase.dart';
 import '../../features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
 import '../../features/obstacle_avoidance/data/capture_log_service.dart';
+import '../../features/google_navigation/data/google_route_repository.dart';
 import '../../features/mapbox_navigation/application/navigation_service.dart';
 import '../../features/mapbox_navigation/data/data_sources/mapbox_datasource.dart';
 import '../../features/mapbox_navigation/data/repositories/campus_route_repository_impl.dart';
@@ -20,6 +21,8 @@ import '../services/compass/flutter_compass_service.dart';
 import '../services/profile/user_profile_service.dart';
 import '../services/camera/camera_frame_source.dart';
 import '../services/camera/camera_frame_source_impl.dart';
+import '../services/gallery/gallery_saver.dart';
+import '../services/gallery/gal_gallery_saver.dart';
 import '../services/speech_to_text/flutter_stt_service.dart';
 import '../services/speech_to_text/stt_service.dart';
 import '../services/text_to_speech/flutter_tts_service.dart';
@@ -57,8 +60,15 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => GetRouteUseCase(sl()));
 
   sl.registerLazySingleton(
+    () => GoogleRouteRepository(
+      apiKey: dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '',
+    ),
+  );
+
+  sl.registerLazySingleton(
     () => NavigationService(
-      getRoute: sl(),
+      getRouteMapbox: sl<GetRouteUseCase>(),
+      getRouteGoogle: GetRouteUseCase(sl<GoogleRouteRepository>()),
       compass: sl<CompassService>(),
       onInstruction: (instruction) {
         sl<VoiceAssistantService>().speakNavigationInstruction(instruction);
@@ -87,5 +97,8 @@ Future<void> initDependencies() async {
 
   sl.registerLazySingleton<CameraFrameSource>(() => CameraFrameSourceImpl());
 
-  sl.registerLazySingleton(() => CaptureLogService());
+  sl.registerLazySingleton<GallerySaver>(() => GalGallerySaver());
+  sl.registerLazySingleton(
+    () => CaptureLogService(gallery: sl<GallerySaver>()),
+  );
 }

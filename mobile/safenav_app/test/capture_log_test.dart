@@ -1,6 +1,18 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:safenav_app/core/services/gallery/gallery_saver.dart';
 import 'package:safenav_app/features/obstacle_avoidance/data/capture_log_service.dart';
 import 'package:safenav_app/features/obstacle_avoidance/domain/entities/detection_result.dart';
+
+class _FakeGallery implements GallerySaver {
+  final List<String> names = [];
+  @override
+  Future<void> saveImage(Uint8List bytes, {required String name}) async {
+    names.add(name);
+  }
+}
 
 void main() {
   group('buildCaptureCsvRow', () {
@@ -57,6 +69,86 @@ void main() {
       final r = DetectionResult.fromJson({'frame_id': 2, 'instruction': 'x'});
       final row = buildCaptureCsvRow(r, capturedAt, 'f.jpg');
       expect(row.startsWith('2026-06-19T13:00:00.000Z,2,f.jpg,false,,'), isTrue);
+    });
+  });
+
+  group('CaptureLogService preview saving', () {
+    test('saves the frame plus all attached previews and counts them',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('safenav_cap_test');
+      addTearDown(() => dir.delete(recursive: true));
+
+      final r = DetectionResult.fromJson({
+        'frame_id': 5,
+        'instruction': 'ok',
+        'yolo_attached': true,
+        'depth_attached': true,
+        'seg_attached': true,
+        'mask_attached': true,
+      });
+      r.yoloPreview = Uint8List.fromList([1, 2, 3]);
+      r.depthPreview = Uint8List.fromList([4, 5]);
+      r.segPreview = Uint8List.fromList([6]);
+      r.maskPreview = Uint8List.fromList([7, 8, 9, 10]);
+
+      final svc = CaptureLogService.forDirectory(dir);
+      final record = await svc.save(
+        frameJpeg: Uint8List.fromList([0, 0]),
+        result: r,
+        capturedAt: DateTime.utc(2026, 6, 20, 16, 0, 0),
+      );
+
+      expect(record.previewCount, 4);
+      final names = dir
+          .listSync()
+          .map((e) => e.path.split(Platform.pathSeparator).last)
+          .toList();
+      expect(names.any((n) => n.endsWith('_yolo.jpg')), isTrue);
+      expect(names.any((n) => n.endsWith('_depth.jpg')), isTrue);
+      expect(names.any((n) => n.endsWith('_seg.jpg')), isTrue);
+      expect(names.any((n) => n.endsWith('_mask.png')), isTrue);
+      expect(names.contains('captures.csv'), isTrue);
+    });
+
+    test('saves no previews when none are attached', () async {
+      final dir = await Directory.systemTemp.createTemp('safenav_cap_test2');
+      addTearDown(() => dir.delete(recursive: true));
+      final r = DetectionResult.fromJson({'frame_id': 6, 'instruction': 'ok'});
+      final record = await CaptureLogService.forDirectory(dir).save(
+        frameJpeg: Uint8List.fromList([0]),
+        result: r,
+        capturedAt: DateTime.utc(2026, 6, 20, 16, 0, 0),
+      );
+      expect(record.previewCount, 0);
+    });
+
+    test('also saves frame + previews to the gallery when a saver is set',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('safenav_cap_test3');
+      addTearDown(() => dir.delete(recursive: true));
+      final fakeGallery = _FakeGallery();
+
+      final r = DetectionResult.fromJson({
+        'frame_id': 9,
+        'instruction': 'ok',
+        'yolo_attached': true,
+        'mask_attached': true,
+      });
+      r.yoloPreview = Uint8List.fromList([1, 2]);
+      r.maskPreview = Uint8List.fromList([3, 4]);
+
+      final record =
+          await CaptureLogService.forDirectory(dir, gallery: fakeGallery).save(
+        frameJpeg: Uint8List.fromList([0, 0]),
+        result: r,
+        capturedAt: DateTime.utc(2026, 6, 20, 16, 0, 0),
+      );
+
+      // frame + yolo + mask = 3 images sent to the gallery.
+      expect(record.gallerySaved, 3);
+      expect(fakeGallery.names.length, 3);
+      expect(fakeGallery.names.any((n) => n.endsWith('_yolo')), isTrue);
+      expect(fakeGallery.names.any((n) => n.endsWith('_mask')), isTrue);
     });
   });
 }

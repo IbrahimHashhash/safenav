@@ -55,6 +55,7 @@ dependencies:
   path_provider: ^2.1.4
   share_plus: ^10.1.4
   shared_preferences: ^2.3.2
+  gal: ^2.3.0
 
 dev_dependencies:
   flutter_test:

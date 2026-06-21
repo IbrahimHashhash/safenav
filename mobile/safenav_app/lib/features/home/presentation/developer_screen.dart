@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../shared/widgets/caption_card.dart';
 import '../../../shared/widgets/streaming_button.dart';
 import '../../../core/di/injection.dart';
+import '../../../core/services/location/walking_speed_tracker.dart';
 import '../../mapbox_navigation/application/navigation_service.dart';
 import '../../mapbox_navigation/presentation/widgets/navigation_map_view.dart';
 import '../../obstacle_avoidance/application/obstacle_listener_service.dart';
@@ -51,6 +52,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   bool _capturing = false;
   String? _capturesDir;
   NavProvider _navProvider = NavProvider.mapbox;
+  late final WalkingSpeedTracker _speed;
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -79,6 +81,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       if (mounted) setState(() => _capturesDir = path);
     });
     _navProvider = sl<NavigationService>().provider;
+    _speed = sl<WalkingSpeedTracker>();
+    _speed.start();
   }
 
   Future<void> _setNavProvider(NavProvider provider) async {
@@ -99,6 +103,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   void dispose() {
     _sub?.cancel();
     _captureSub?.cancel();
+    _speed.stop();
     super.dispose();
   }
 
@@ -216,6 +221,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
 
               _statusStrip(),
               const SizedBox(height: 16),
+
+              _section(
+                icon: Icons.directions_walk,
+                title: 'Walking speed',
+                child: _walkingSpeedView(),
+              ),
+              const SizedBox(height: 14),
 
               _section(
                 icon: Icons.videocam,
@@ -440,6 +452,66 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _walkingSpeedView() {
+    return StreamBuilder<WalkingSpeedSample>(
+      stream: _speed.samples,
+      initialData: _speed.current,
+      builder: (context, snapshot) {
+        final s = snapshot.data ?? WalkingSpeedSample.zero;
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final tileWidth = (constraints.maxWidth - 10) / 2;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    _badge(
+                      s.moving ? 'Walking' : 'Stopped',
+                      s.moving ? Colors.lightGreenAccent : Colors.orangeAccent,
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _speed.reset,
+                      icon: const Icon(Icons.restart_alt, size: 18),
+                      label: const Text('Reset'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _statTile(
+                      tileWidth,
+                      'Current',
+                      '${s.currentKmh.toStringAsFixed(1)} km/h',
+                      icon: Icons.speed,
+                    ),
+                    _statTile(
+                      tileWidth,
+                      'Average (walking)',
+                      '${s.averageKmh.toStringAsFixed(1)} km/h',
+                      valueColor: Colors.amberAccent,
+                      icon: Icons.timeline,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Current ${s.currentMps.toStringAsFixed(2)} m/s · '
+                  'Average ${s.averageMps.toStringAsFixed(2)} m/s',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

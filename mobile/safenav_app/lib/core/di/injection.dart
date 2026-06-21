@@ -21,6 +21,7 @@ import '../services/compass/flutter_compass_service.dart';
 import '../services/profile/user_profile_service.dart';
 import '../services/camera/camera_frame_source.dart';
 import '../services/camera/camera_frame_source_impl.dart';
+import '../services/location/walking_speed_tracker.dart';
 import '../services/gallery/gallery_saver.dart';
 import '../services/gallery/gal_gallery_saver.dart';
 import '../services/speech_to_text/flutter_stt_service.dart';
@@ -98,6 +99,7 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton<CameraFrameSource>(() => CameraFrameSourceImpl());
 
   sl.registerLazySingleton<GallerySaver>(() => GalGallerySaver());
+  sl.registerLazySingleton(() => WalkingSpeedTracker());
   sl.registerLazySingleton(
     () => CaptureLogService(gallery: sl<GallerySaver>()),
   );

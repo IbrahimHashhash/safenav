@@ -145,5 +145,38 @@ void main() {
           position: a, heading: 180, headingStable: false, now: t0);
       expect(u.instruction!.kind, isNot(NavInstructionKind.orientation));
     });
+
+    test('orientation is suppressed when approaching a turn', () {
+      final engine = NavEngine(lRoute());
+      // A point on segment A-B, close to the turn at B (within 12 m), with a
+      // wrong-facing heading. The orientation correction must NOT fire here.
+      const nearB = GeoPoint(31.95995, 35.18199); // ~5-10 m before B
+      final u = engine.update(
+        position: nearB,
+        heading: 200,
+        headingStable: true,
+        now: t0,
+      );
+      expect(u.instruction?.kind, isNot(NavInstructionKind.orientation));
+    });
+
+    test('orientation is suppressed for a few seconds after a turn fires', () {
+      final engine = NavEngine(lRoute());
+      engine.update(position: a, now: t0);
+      // Fire the turn at B.
+      final turn =
+          engine.update(position: b, now: t0.add(const Duration(seconds: 6)));
+      expect(turn.instruction!.kind, NavInstructionKind.turn);
+      // Immediately after, a wrong heading must NOT produce an orientation
+      // correction that contradicts the just-spoken turn.
+      const afterB = GeoPoint(31.96020, 35.1820); // on segment B-C
+      final u = engine.update(
+        position: afterB,
+        heading: 200,
+        headingStable: true,
+        now: t0.add(const Duration(seconds: 7)),
+      );
+      expect(u.instruction?.kind, isNot(NavInstructionKind.orientation));
+    });
   });
 }

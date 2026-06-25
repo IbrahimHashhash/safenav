@@ -45,12 +45,23 @@ class NavEngineConfig {
   final double orientationDeadzoneDeg;
   final double turnAroundThresholdDeg;
 
+  /// Orientation corrections are suppressed when the user is within this
+  /// distance (m) of the next turn — the maneuver instruction handles the turn,
+  /// and the compass-vs-segment-bearing reading is unreliable at a corner.
+  final double orientationApproachMeters;
+
+  /// Orientation corrections are also suppressed for this long AFTER a turn
+  /// fires, while the user is completing the turn (heading still settling).
+  final Duration orientationSettle;
+
   const NavEngineConfig({
     this.speechCooldown = const Duration(seconds: 5),
     this.reachableWindowMeters = 4.0,
     this.arrivalRadiusMeters = 5.5,
     this.orientationDeadzoneDeg = 45.0,
     this.turnAroundThresholdDeg = 135.0,
+    this.orientationApproachMeters = 12.0,
+    this.orientationSettle = const Duration(seconds: 5),
   });
 }
 
@@ -61,6 +72,7 @@ class NavEngine {
   int _nextTurnIndex = 0;
   NavInstruction? _lastSpoken;
   DateTime? _lastSpeakTime;
+  DateTime? _lastTurnAt;
   bool _arrived = false;
 
   NavEngine(this.route, {this.config = const NavEngineConfig()});
@@ -121,6 +133,7 @@ class NavEngine {
       final passed = userAlong >= activeTurn.distanceAlong;
       if (reached || passed) {
         _nextTurnIndex++;
+        _lastTurnAt = now;
         final inst = _commit(NavPhrasing.turn(activeTurn.direction), now);
         return NavUpdate(
           instruction: inst,
@@ -133,7 +146,15 @@ class NavEngine {
     }
 
     // 3) Orientation correction (non-critical), only on a stable heading.
-    if (headingStable && heading != null) {
+    //    Suppressed near a turn and just after one: there the maneuver handles
+    //    guidance and the compass-vs-segment-bearing reading flips at the
+    //    corner, which would otherwise contradict the turn ("turn left" + an
+    //    opposite "turn right to face the path").
+    final nearTurn =
+        hasTurnAhead && remainingToTurn <= config.orientationApproachMeters;
+    final settling = _lastTurnAt != null &&
+        now.difference(_lastTurnAt!) < config.orientationSettle;
+    if (headingStable && heading != null && !nearTurn && !settling) {
       final delta = GeoMath.signedAngularDifference(heading, segBearing);
       final absDelta = delta.abs();
       if (absDelta > config.orientationDeadzoneDeg) {

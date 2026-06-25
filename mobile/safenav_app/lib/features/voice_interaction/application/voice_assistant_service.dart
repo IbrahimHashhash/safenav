@@ -110,7 +110,7 @@ class VoiceAssistantService {
     // pushing to talk always interrupts and lets the user speak.
     await _speechQueue.clearAll();
 
-    await _cueListeningStarted();
+    await _playCue();
     if (!_isPressActive) return;
 
     onStateChange?.call(VoiceListening());
@@ -138,8 +138,10 @@ class VoiceAssistantService {
     return result;
   }
 
-  Future<void> _cueListeningStarted() async {
+  Future<void> _playCue({double rate = 1.0, double volume = 1.0}) async {
     try {
+      await _cuePlayer.setPlaybackRate(rate);
+      await _cuePlayer.setVolume(volume);
       await _cuePlayer.play(AssetSource('sounds/activation.wav'));
     } catch (_) {}
   }
@@ -148,6 +150,7 @@ class VoiceAssistantService {
     _isPressActive = false;
     _hasHandledCommand = true;
     await _runStt(() => _sttService.stopListening());
+    await _playCue(rate: 1.25, volume: 0.55);
     _endConversation();
     onStateChange?.call(VoiceIdle());
   }
@@ -173,7 +176,10 @@ class VoiceAssistantService {
     onStateChange?.call(VoiceError(message));
   }
 
-  Future<void> stopSpeaking() => _speechQueue.skipCurrent();
+  Future<void> stopSpeaking() async {
+    await _playCue(rate: 1.25, volume: 0.55);
+    await _speechQueue.skipCurrent();
+  }
 
   Future<void> _handleRecognizedText(String text) async {
     final trimmed = text.trim();

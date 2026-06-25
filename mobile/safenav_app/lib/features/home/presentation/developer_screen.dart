@@ -53,6 +53,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   String? _capturesDir;
   NavProvider _navProvider = NavProvider.mapbox;
   late final WalkingSpeedTracker _speed;
+  bool _hqPreviews = false;
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -217,6 +218,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              _hqPreviewsToggle(),
               const SizedBox(height: 12),
 
               _statusStrip(),
@@ -512,6 +515,38 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           },
         );
       },
+    );
+  }
+
+  // --- High-quality previews toggle ----------------------------------------
+
+  Widget _hqPreviewsToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: SwitchListTile.adaptive(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        value: _hqPreviews,
+        activeThumbColor: _accent,
+        onChanged: (v) {
+          setState(() => _hqPreviews = v);
+          widget.listener.setHighQualityPreviews(v);
+        },
+        secondary: const Icon(Icons.high_quality, color: Colors.white70),
+        title: const Text(
+          'High quality previews',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        subtitle: const Text(
+          'Captured frames only · large files · use on a good LAN',
+          style: TextStyle(color: Colors.white54, fontSize: 11),
+        ),
+      ),
     );
   }
 

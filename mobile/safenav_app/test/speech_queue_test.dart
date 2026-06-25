@@ -101,6 +101,26 @@ void main() {
       expect(tts.spoken, ['reply']); // untouched, still current
     });
 
+    test('clearAll stops an assistant reply and clears the queue', () async {
+      final tts = _FakeTts();
+      final queue = SpeechQueue(
+        ttsService: tts,
+        onSpeaking: (_) {},
+        onIdle: () {},
+      );
+      var replyDone = 0;
+      await queue.enqueue(SpeechRequest('reply', SpeechPriority.assistant,
+          onDone: () => replyDone++));
+      await queue.enqueue(const SpeechRequest('nav', SpeechPriority.navigation));
+
+      await queue.clearAll();
+      // The assistant reply is stopped (onDone fired) and the queue is empty.
+      expect(replyDone, 1);
+      expect(queue.isActive, isFalse);
+      tts.finishCurrent(); // no-op; nothing queued
+      expect(tts.spoken, ['reply']);
+    });
+
     test('onDone fires when a request finishes or is skipped', () async {
       final tts = _FakeTts();
       final queue = SpeechQueue(

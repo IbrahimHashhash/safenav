@@ -27,9 +27,9 @@ class _UserScreenState extends State<UserScreen> {
     final cubit = context.read<VoiceAssistantCubit>();
     if (state is VoiceListening) {
       cubit.cancelListening();
-    } else if (state is VoiceSpeaking) {
-      cubit.stopSpeaking();
     } else {
+      // Idle, speaking, processing or error: push-to-talk starts listening.
+      // startListening() interrupts any ongoing speech so the user can talk.
       cubit.startListening();
     }
   }

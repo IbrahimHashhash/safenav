@@ -106,7 +106,9 @@ class VoiceAssistantService {
     // playing so it never talks over the user.
     _conversationId++;
     _conversationActive = true;
-    await _speechQueue.clearNonAssistant();
+    // Silence ANY speech currently playing (guidance or an assistant reply) so
+    // pushing to talk always interrupts and lets the user speak.
+    await _speechQueue.clearAll();
 
     await _cueListeningStarted();
     if (!_isPressActive) return;

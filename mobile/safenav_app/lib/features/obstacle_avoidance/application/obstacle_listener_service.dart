@@ -77,6 +77,16 @@ class ObstacleListenerService implements DetectionController {
 
   String _lastSpoken = '';
   DateTime _lastSpokenAt = DateTime.fromMillisecondsSinceEpoch(0);
+  // Semantic fingerprint of the last spoken obstacle warning, so a new warning
+  // about the SAME obstacle in the SAME region at a near-identical distance is
+  // dropped instead of repeated.
+  String? _lastWarnLabel;
+  int? _lastWarnRegion;
+  double? _lastWarnDistance;
+
+  /// Two warnings are "nearly the same" if the obstacle distance differs by no
+  /// more than this (meters).
+  static const double _similarDistanceM = 0.5;
 
   final StreamController<DetectionResult> _resultsController =
       StreamController<DetectionResult>.broadcast();
@@ -308,7 +318,7 @@ class ObstacleListenerService implements DetectionController {
       if (waiter != null && !waiter.isCompleted) waiter.complete();
     }
 
-    _maybeSpeak(result.instruction);
+    _maybeSpeak(result);
   }
 
   /// Single vibration when a CAR is very close (imminent collision / path
@@ -355,17 +365,38 @@ class ObstacleListenerService implements DetectionController {
     }
   }
 
-  void _maybeSpeak(String instruction) {
-    final text = instruction.trim();
+  /// Speaks the frame's instruction unless it's a too-quick repeat of the same
+  /// warning. A new warning is DROPPED (within the cooldown) when it concerns
+  /// the same obstacle, in the same region, at a near-identical distance
+  /// (<= [_similarDistanceM]). A change of region, obstacle, or a distance
+  /// change > 0.5 m is always spoken.
+  void _maybeSpeak(DetectionResult result) {
+    final text = result.instruction.trim();
     if (text.isEmpty) return;
 
     final now = DateTime.now();
-    if (text == _lastSpoken &&
+    final label = result.primaryLabel;
+    final region = result.primaryRegionIndex();
+    final distance = result.primaryDistanceMeters();
+
+    final sameRegion = region == _lastWarnRegion;
+    final sameLabel = label == _lastWarnLabel;
+    final distanceClose = distance != null &&
+        _lastWarnDistance != null &&
+        (distance - _lastWarnDistance!).abs() <= _similarDistanceM;
+    final nearlySimilar = sameRegion && sameLabel && distanceClose;
+    final identicalText = text == _lastSpoken;
+
+    if ((nearlySimilar || identicalText) &&
         now.difference(_lastSpokenAt) < _repeatCooldown) {
       return;
     }
+
     _lastSpoken = text;
     _lastSpokenAt = now;
+    _lastWarnLabel = label;
+    _lastWarnRegion = region;
+    _lastWarnDistance = distance;
 
     voiceCubit.speakObstacleInstruction(text);
   }

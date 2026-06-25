@@ -188,6 +188,41 @@ void main() {
     });
   });
 
+  group('primary warning (dedup signature)', () {
+    DetectionResult build(double centreX, {String label = 'person'}) {
+      final half = 0.05;
+      return DetectionResult.fromJson({
+        'instruction': 'obstacle ahead',
+        'highest_priority': {
+          'label': label,
+          'bbox': [centreX - half, 0.3, centreX + half, 0.8],
+        },
+        'free_zones': {
+          'left': {'clear': false, 'clearance_m': 1.0},
+          'slight_left': {'clear': false, 'clearance_m': 1.5},
+          'centre': {'clear': false, 'clearance_m': 2.0},
+          'slight_right': {'clear': false, 'clearance_m': 2.5},
+          'right': {'clear': false, 'clearance_m': 3.0},
+        },
+      });
+    }
+
+    test('primaryRegionIndex maps the bbox centre to a region', () {
+      expect(build(0.1).primaryRegionIndex(), 0); // left
+      expect(build(0.5).primaryRegionIndex(), 2); // centre
+      expect(build(0.95).primaryRegionIndex(), 4); // right
+    });
+
+    test('primaryDistanceMeters uses the occupied region clearance', () {
+      expect(build(0.5).primaryDistanceMeters(), closeTo(2.0, 1e-9)); // centre
+      expect(build(0.1).primaryDistanceMeters(), closeTo(1.0, 1e-9)); // left
+    });
+
+    test('primaryLabel is the highest-priority label', () {
+      expect(build(0.5, label: 'bicycle').primaryLabel, 'bicycle');
+    });
+  });
+
   group('parseFreeZones', () {
     test('parses a list of booleans in order', () {
       final z = parseFreeZones([true, false, true, true, false]);

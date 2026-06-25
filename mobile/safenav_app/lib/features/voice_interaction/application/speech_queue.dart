@@ -90,6 +90,19 @@ class SpeechQueue {
     }
   }
 
+  /// Stops ALL speech (any priority, including an assistant reply) and clears
+  /// the queue. Used when the user pushes to talk so nothing keeps speaking
+  /// over them.
+  Future<void> clearAll() async {
+    _queue.clear();
+    final current = _currentRequest;
+    if (current != null) {
+      await ttsService.stop();
+      _currentRequest = null;
+      current.onDone?.call();
+    }
+  }
+
   Future<void> _speakNow(SpeechRequest request) async {
     _currentRequest = request;
     onSpeaking(request.text);

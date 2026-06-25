@@ -345,6 +345,32 @@ class DetectionResult {
     return best ?? minBlockedClearanceM;
   }
 
+  /// Label of the obstacle this frame is primarily warning about (the
+  /// highest-priority obstacle), or null.
+  String? get primaryLabel => highestPriority?.label;
+
+  /// Which free-zone region the primary obstacle's bbox centre falls in
+  /// (0 = leftmost), or null when unknown.
+  int? primaryRegionIndex() {
+    final hp = highestPriority;
+    if (hp == null || hp.bbox.length < 4 || freeZones.isEmpty) return null;
+    final centreX = (hp.bbox[0] + hp.bbox[2]) / 2.0;
+    return (centreX * freeZones.length).floor().clamp(0, freeZones.length - 1);
+  }
+
+  /// Estimated distance (meters) to the primary obstacle: its own distance,
+  /// else the clearance of the region it occupies, else the smallest blocked
+  /// clearance. Used to decide whether a new warning is "nearly the same".
+  double? primaryDistanceMeters() {
+    final hp = highestPriority;
+    if (hp != null) {
+      if (hp.distanceMeters != null) return hp.distanceMeters;
+      final idx = primaryRegionIndex();
+      if (idx != null) return freeZones[idx].clearanceM;
+    }
+    return minBlockedClearanceM;
+  }
+
   factory DetectionResult.fromJson(Map<String, dynamic> json) {
     final instructionValue = json['instruction'];
     final obstaclesRaw = json['obstacles'];

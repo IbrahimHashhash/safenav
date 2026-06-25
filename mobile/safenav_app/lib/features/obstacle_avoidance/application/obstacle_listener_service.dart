@@ -45,7 +45,7 @@ class ObstacleListenerService implements DetectionController {
 
   /// A car closer than this (meters) is treated as an imminent collision and
   /// triggers a single vibration.
-  static const double _carCollisionDistanceM = 2.0;
+  static const double _carCollisionDistanceM = 2.5;
 
   /// Minimum gap between collision vibrations so it doesn't buzz continuously
   /// while the car stays close.
@@ -312,16 +312,15 @@ class ObstacleListenerService implements DetectionController {
   }
 
   /// Single vibration when a CAR is very close (imminent collision / path
-  /// blocking). Debounced so it doesn't buzz continuously.
+  /// blocking). Uses the car's own distance when available, otherwise the
+  /// clearance of the free-zone region the car blocks. Debounced.
   void _maybeVibrateForCar(DetectionResult result) {
     final now = DateTime.now();
     if (now.difference(_lastVibrationAt) < _vibrationCooldown) return;
 
-    final imminentCar = result.obstacles.any((o) =>
-        o.label.toLowerCase().contains('car') &&
-        o.distanceMeters != null &&
-        o.distanceMeters! <= _carCollisionDistanceM);
-    if (!imminentCar) return;
+    if (!result.hasCar) return;
+    final distance = result.carDistanceMeters();
+    if (distance == null || distance > _carCollisionDistanceM) return;
 
     _lastVibrationAt = now;
     try {

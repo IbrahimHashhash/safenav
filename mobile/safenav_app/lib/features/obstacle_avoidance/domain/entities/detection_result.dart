@@ -246,6 +246,10 @@ class DetectionResult {
   final int? frameHeight;
   final bool skipped;
 
+  /// The obstacle the server flagged as highest priority (e.g. the blocking
+  /// car), when present.
+  final DetectedObstacle? highestPriority;
+
   /// Mean Absolute Difference vs. the previous processed frame (the server's
   /// frame-similarity signal). Lower = more similar; the server skips frames
   /// below its threshold. Null when the server doesn't report it.
@@ -278,6 +282,7 @@ class DetectionResult {
     required this.frameWidth,
     required this.frameHeight,
     required this.skipped,
+    required this.highestPriority,
     required this.mad,
     required this.depthAttached,
     required this.segAttached,
@@ -294,6 +299,52 @@ class DetectionResult {
 
   bool get hasInstruction => instruction.trim().isNotEmpty;
 
+  static bool _labelIsCar(String? label) =>
+      label != null && label.toLowerCase().contains('car');
+
+  /// Whether a car is present (as the highest-priority obstacle or in the list).
+  bool get hasCar =>
+      _labelIsCar(highestPriority?.label) ||
+      obstacles.any((o) => _labelIsCar(o.label));
+
+  /// Smallest clearance among BLOCKED free-zone regions (meters), or null.
+  double? get minBlockedClearanceM {
+    double? m;
+    for (final z in freeZones) {
+      if (!z.free && z.clearanceM != null) {
+        if (m == null || z.clearanceM! < m) m = z.clearanceM;
+      }
+    }
+    return m;
+  }
+
+  /// Estimated distance (meters) to the nearest detected car, using:
+  ///  1. the car obstacle's own distance, if the server provides one;
+  ///  2. else the clearance of the free-zone region the car's bbox centre falls
+  ///     in (the car blocks that region);
+  ///  3. else the smallest blocked-region clearance.
+  /// Returns null when no car / no distance signal is available.
+  double? carDistanceMeters() {
+    final cars = <DetectedObstacle>[
+      if (_labelIsCar(highestPriority?.label)) highestPriority!,
+      ...obstacles.where((o) => _labelIsCar(o.label)),
+    ];
+    if (cars.isEmpty) return null;
+
+    double? best;
+    for (final car in cars) {
+      double? d = car.distanceMeters;
+      if (d == null && car.bbox.length >= 4 && freeZones.isNotEmpty) {
+        final centreX = (car.bbox[0] + car.bbox[2]) / 2.0;
+        final idx =
+            (centreX * freeZones.length).floor().clamp(0, freeZones.length - 1);
+        d = freeZones[idx].clearanceM;
+      }
+      if (d != null && (best == null || d < best)) best = d;
+    }
+    return best ?? minBlockedClearanceM;
+  }
+
   factory DetectionResult.fromJson(Map<String, dynamic> json) {
     final instructionValue = json['instruction'];
     final obstaclesRaw = json['obstacles'];
@@ -303,6 +354,11 @@ class DetectionResult {
             .map(DetectedObstacle.fromJson)
             .toList()
         : <DetectedObstacle>[];
+
+    final hpRaw = json['highest_priority'];
+    final highestPriority = hpRaw is Map<String, dynamic>
+        ? DetectedObstacle.fromJson(hpRaw)
+        : null;
 
     final metricsRaw = json['metrics'];
     final metrics = metricsRaw is Map<String, dynamic>
@@ -342,6 +398,7 @@ class DetectionResult {
       frameWidth: dim('w'),
       frameHeight: dim('h'),
       skipped: json['skipped'] == true,
+      highestPriority: highestPriority,
       mad: mad,
       depthAttached: json['depth_attached'] == true,
       segAttached: json['seg_attached'] == true,

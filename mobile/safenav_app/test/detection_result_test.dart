@@ -135,6 +135,59 @@ void main() {
     });
   });
 
+  group('car proximity (vibration trigger)', () {
+    test('hasCar true when the highest-priority obstacle is a car', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'path blocked',
+        'highest_priority': {'label': 'car', 'bbox': [0.4, 0.3, 0.6, 0.8]},
+        'free_zones': {
+          'left': {'clear': true, 'clearance_m': 4.0},
+          'slight_left': {'clear': true, 'clearance_m': 4.0},
+          'centre': {'clear': false, 'clearance_m': 1.5},
+          'slight_right': {'clear': true, 'clearance_m': 4.0},
+          'right': {'clear': true, 'clearance_m': 4.0},
+        },
+      });
+      expect(r.hasCar, isTrue);
+      // Car centre x = 0.5 -> centre region (index 2) -> clearance 1.5 m.
+      expect(r.carDistanceMeters(), closeTo(1.5, 1e-9));
+    });
+
+    test('uses the car obstacle distance when the server provides one', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'path blocked',
+        'obstacles': [
+          {'label': 'car', 'confidence': 0.9, 'distance': 1.2, 'bbox': []},
+        ],
+      });
+      expect(r.hasCar, isTrue);
+      expect(r.carDistanceMeters(), closeTo(1.2, 1e-9));
+    });
+
+    test('falls back to min blocked clearance when bbox is missing', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'path blocked',
+        'highest_priority': {'label': 'car'},
+        'free_zones': {
+          'centre': {'clear': false, 'clearance_m': 1.0},
+          'right': {'clear': true, 'clearance_m': 3.0},
+        },
+      });
+      expect(r.carDistanceMeters(), closeTo(1.0, 1e-9));
+    });
+
+    test('no car -> hasCar false and distance null', () {
+      final r = DetectionResult.fromJson({
+        'instruction': 'path clear',
+        'obstacles': [
+          {'label': 'person', 'confidence': 0.8, 'bbox': [0.4, 0.3, 0.6, 0.8]},
+        ],
+      });
+      expect(r.hasCar, isFalse);
+      expect(r.carDistanceMeters(), isNull);
+    });
+  });
+
   group('parseFreeZones', () {
     test('parses a list of booleans in order', () {
       final z = parseFreeZones([true, false, true, true, false]);

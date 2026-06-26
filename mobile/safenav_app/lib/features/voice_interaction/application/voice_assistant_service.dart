@@ -100,6 +100,10 @@ class VoiceAssistantService {
   /// with the assistant, so it never interrupts the command or the reply.
   Future<void> _enqueueGuidance(SpeechRequest request) async {
     if (_conversationActive) return;
+    // Track the most recent line actually spoken (guidance OR assistant reply)
+    // so "repeat" replays whatever the user last heard — navigation, obstacle,
+    // or an assistant response.
+    _lastInstruction = request.text;
     await _speechQueue.enqueue(request);
   }
 

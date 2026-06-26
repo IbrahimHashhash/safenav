@@ -41,7 +41,7 @@ class ObstacleListenerService implements DetectionController {
 
   /// Suppress an identical, unchanged spoken instruction (e.g. "path clear")
   /// for this long so it isn't repeated every couple of seconds.
-  static const Duration _repeatCooldown = Duration(seconds: 5);
+  static const Duration _repeatCooldown = Duration(seconds: 10);
 
   /// A car closer than this (meters) is treated as an imminent collision and
   /// triggers a single vibration.

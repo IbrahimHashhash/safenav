@@ -42,9 +42,50 @@ class _UserScreenState extends State<UserScreen> {
           setState(() => _inputCaption = state.input);
         } else if (state is VoiceSpeaking && state.text.isNotEmpty) {
           setState(() => _replyCaption = state.text);
+        } else if (state is VoiceIdle || state is VoiceListening) {
+          // A new turn (or going idle): drop the previous captions so they
+          // fade away instead of lingering statically on screen.
+          if (_inputCaption.isNotEmpty || _replyCaption.isNotEmpty) {
+            setState(() {
+              _inputCaption = '';
+              _replyCaption = '';
+            });
+          }
         }
       },
       builder: (context, state) {
+        // Captions are not static: the "You said" card shows only while the
+        // turn is being processed/spoken, and "Assistant" only while speaking.
+        final showInput =
+            (state is VoiceProcessing || state is VoiceSpeaking) &&
+                _inputCaption.isNotEmpty;
+        final showReply = state is VoiceSpeaking && _replyCaption.isNotEmpty;
+
+        final cards = <Widget>[];
+        if (showInput) {
+          cards.add(
+            CaptionCard(
+              key: const ValueKey('caption-input'),
+              label: 'You said',
+              text: _inputCaption,
+              icon: Icons.mic,
+              accent: const Color(0xFF2979FF),
+            ),
+          );
+        }
+        if (showReply) {
+          if (cards.isNotEmpty) cards.add(const SizedBox(height: 10));
+          cards.add(
+            CaptionCard(
+              key: const ValueKey('caption-reply'),
+              label: 'Assistant',
+              text: _replyCaption,
+              icon: Icons.volume_up,
+              accent: const Color(0xFF9C4DFF),
+            ),
+          );
+        }
+
         return Stack(
           children: [
             // Push-to-talk fills the whole screen.
@@ -57,31 +98,28 @@ class _UserScreenState extends State<UserScreen> {
             ),
 
             // Bottom: captions for input speech and spoken reply.
+            // Wrapped in IgnorePointer so taps over the captions fall through
+            // to the full-screen push-to-talk GestureDetector above. The cards
+            // stay visible and are still announced by TalkBack via Semantics.
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              child: SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CaptionCard(
-                        label: 'You said',
-                        text: _inputCaption,
-                        icon: Icons.mic,
-                        accent: const Color(0xFF2979FF),
-                      ),
-                      const SizedBox(height: 10),
-                      CaptionCard(
-                        label: 'Assistant',
-                        text: _replyCaption,
-                        icon: Icons.volume_up,
-                        accent: const Color(0xFF9C4DFF),
-                      ),
-                    ],
+              child: IgnorePointer(
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: cards.isEmpty
+                          ? const SizedBox.shrink()
+                          : Column(
+                              key: ValueKey('captions-$showInput-$showReply'),
+                              mainAxisSize: MainAxisSize.min,
+                              children: cards,
+                            ),
+                    ),
                   ),
                 ),
               ),

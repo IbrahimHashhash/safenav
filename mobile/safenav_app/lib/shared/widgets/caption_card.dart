@@ -1,86 +1,69 @@
 import 'package:flutter/material.dart';
 
-/// A labelled caption box. When the text is longer than [maxHeight] it becomes
-/// scrollable with a visible scrollbar instead of growing without bound.
-class CaptionCard extends StatefulWidget {
+/// A labelled caption box. The captions are informational only (they're also
+/// spoken aloud), so long text is capped to [maxLines] and ellipsized rather
+/// than shown in a scroll view — the cards are non-interactive, so a scrollbar
+/// would be unusable anyway.
+class CaptionCard extends StatelessWidget {
   const CaptionCard({
     super.key,
     required this.label,
     required this.text,
     required this.icon,
     required this.accent,
-    this.maxHeight = 120,
+    this.maxLines = 4,
   });
 
   final String label;
   final String text;
   final IconData icon;
   final Color accent;
-  final double maxHeight;
-
-  @override
-  State<CaptionCard> createState() => _CaptionCardState();
-}
-
-class _CaptionCardState extends State<CaptionCard> {
-  final ScrollController _scrollController = ScrollController();
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) {
-    final hasText = widget.text.trim().isNotEmpty;
+    final hasText = text.trim().isNotEmpty;
 
     return Semantics(
       liveRegion: true,
-      label: hasText ? '${widget.label}: ${widget.text}' : null,
+      label: hasText ? '$label: $text' : null,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.55),
+          // Tinted with the dark theme background and kept mostly transparent
+          // so the cards blend in instead of popping over the screen.
+          color: const Color(0xFF121212).withValues(alpha: 0.30),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: widget.accent.withValues(alpha: 0.6)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(widget.icon, color: widget.accent, size: 22),
+            Icon(icon, color: accent.withValues(alpha: 0.7), size: 22),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.label,
+                    label,
                     style: TextStyle(
-                      color: widget.accent,
+                      color: accent.withValues(alpha: 0.7),
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.5,
                     ),
                   ),
                   const SizedBox(height: 4),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: widget.maxHeight),
-                    child: Scrollbar(
-                      controller: _scrollController,
-                      thumbVisibility: true,
-                      child: SingleChildScrollView(
-                        controller: _scrollController,
-                        child: Text(
-                          hasText ? widget.text : '—',
-                          style: TextStyle(
-                            color: hasText ? Colors.white : Colors.white38,
-                            fontSize: 16,
-                            height: 1.3,
-                          ),
-                        ),
-                      ),
+                  Text(
+                    hasText ? text : '—',
+                    maxLines: maxLines,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: hasText ? Colors.white : Colors.white38,
+                      fontSize: 16,
+                      height: 1.3,
                     ),
                   ),
                 ],

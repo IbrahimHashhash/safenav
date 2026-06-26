@@ -66,7 +66,19 @@ class VoiceAssistantService {
     );
   }
 
-  Future<void> initialize() => _sttService.initialize();
+  Future<void> initialize() async {
+    // The cue is a short UI blip. Configure its player to NOT participate in
+    // audio focus (mixWithOthers -> AndroidAudioFocus.none). Otherwise, when
+    // the recorder or TTS grabs audio focus, audioplayers receives
+    // AUDIOFOCUS_LOSS and pauses the cue mid-playback — which made the
+    // start/stop cues play only randomly.
+    try {
+      await _cuePlayer.setAudioContext(
+        AudioContextConfig(focus: AudioContextConfigFocus.mixWithOthers).build(),
+      );
+    } catch (_) {}
+    await _sttService.initialize();
+  }
 
   /// Attaches the obstacle-detection controller so voice commands can toggle
   /// detection. Wired after the listener is constructed.
@@ -111,6 +123,24 @@ class VoiceAssistantService {
     await _speechQueue.clearAll();
 
     await _playCue();
+    if (!_isPressActive) return;
+
+    // Let the activation cue finish before opening the mic, so speaker output
+    // never overlaps microphone capture (overlap can disrupt recording on
+    // Android). The cue is the user's "speak now" signal anyway.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (!_isPressActive) return;
+
+    // Pre-roll buffer: start capturing into a buffer NOW, before Azure is
+    // connected, so the first word spoken right after the cue isn't lost during
+    // the ~1s the session takes to come online. Azure receives the buffered
+    // audio first, then live audio, once it connects.
+    try {
+      await _runStt(() => _sttService.primeMic());
+    } catch (e) {
+      _onSttError('Microphone error: $e');
+      return;
+    }
     if (!_isPressActive) return;
 
     onStateChange?.call(VoiceListening());

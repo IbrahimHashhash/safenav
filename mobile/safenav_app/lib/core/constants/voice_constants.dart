@@ -20,7 +20,7 @@ class VoiceConstants {
   ];
   
   static const listTriggers = [
-    'list', 'show', 'available', 'what', 'give',
+    'list', 'locations', 'location', 'places', 'place',
   ];
 
   static const startNavigationTriggers = [

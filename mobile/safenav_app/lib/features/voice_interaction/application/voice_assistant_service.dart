@@ -176,11 +176,6 @@ class VoiceAssistantService {
     onStateChange?.call(VoiceError(message));
   }
 
-  Future<void> stopSpeaking() async {
-    await _playCue(rate: 1.25, volume: 0.55);
-    await _speechQueue.skipCurrent();
-  }
-
   Future<void> _handleRecognizedText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {

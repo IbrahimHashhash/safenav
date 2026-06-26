@@ -27,9 +27,11 @@ class _UserScreenState extends State<UserScreen> {
     final cubit = context.read<VoiceAssistantCubit>();
     if (state is VoiceListening) {
       cubit.cancelListening();
-    } else if (state is VoiceSpeaking) {
-      cubit.stopSpeaking();
     } else {
+      // Any other state (idle, speaking, processing, error): a tap means
+      // "let me talk now". startListening() silences whatever is currently
+      // speaking — guidance or an assistant reply — and opens the mic, so the
+      // behaviour is identical no matter what the assistant was doing.
       cubit.startListening();
     }
   }

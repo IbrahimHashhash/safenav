@@ -58,6 +58,12 @@ class ParseIntentUseCase {
       'next instruction',
       'continue',
     ],
+    VoiceCommandType.changeName: [
+      'change my name',
+      'change name',
+      'rename me',
+      'update my name',
+    ],
   };
 
   VoiceCommandType call(String text) {
@@ -101,6 +107,16 @@ class ParseIntentUseCase {
 
     if (_containsIntent(words, VoiceConstants.listTriggers)) {
       return VoiceCommandType.listLocations;
+    }
+
+    // Change the stored user name: "change my name", "update my name", or the
+    // standalone "rename me".
+    final saysRename =
+        words.any((w) => TextUtils.isSimilarWord(w, 'rename'));
+    if (saysRename ||
+        (_containsIntent(words, VoiceConstants.changeNameTriggers) &&
+            _containsIntent(words, VoiceConstants.nameWordTriggers))) {
+      return VoiceCommandType.changeName;
     }
 
     if (_containsIntent(words, VoiceConstants.navigateTriggers)) {

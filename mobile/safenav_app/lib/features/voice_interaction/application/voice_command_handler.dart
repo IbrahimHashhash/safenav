@@ -105,6 +105,7 @@ class VoiceCommandHandler {
     VoiceCommandType.moreInfo,
     VoiceCommandType.nextInstruction,
     VoiceCommandType.repeat,
+    VoiceCommandType.changeName,
   };
 
   Future<SpeechRequest> handle(String text) async {
@@ -119,6 +120,17 @@ class VoiceCommandHandler {
 
     if (intent == VoiceCommandType.greeting) {
       return _greet();
+    }
+
+    if (intent == VoiceCommandType.changeName) {
+      _awaitingName = true;
+      return SpeechRequest(
+        userProfile.hasName
+            ? 'Okay ${userProfile.name}, what name would you like me to use '
+                'instead?'
+            : 'Sure, what name would you like me to use?',
+        SpeechPriority.assistant,
+      );
     }
 
     if (intent == VoiceCommandType.navigate) {

@@ -9,5 +9,6 @@ enum VoiceCommandType {
   stopDetection,
   nextInstruction,
   greeting,
+  changeName,
   unknown,
 }

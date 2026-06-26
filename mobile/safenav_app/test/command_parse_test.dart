@@ -52,6 +52,18 @@ void main() {
     });
   });
 
+  group('change name command', () {
+    test('explicit change-name phrasings', () {
+      expect(parse('change my name'), VoiceCommandType.changeName);
+      expect(parse('update my name'), VoiceCommandType.changeName);
+      expect(parse('rename me'), VoiceCommandType.changeName);
+    });
+
+    test('a change verb without "name" is not a name change', () {
+      expect(parse('change the route'), isNot(VoiceCommandType.changeName));
+    });
+  });
+
   group('ambiguous input is not force-matched', () {
     test('"start addition" is treated as unknown, not a wrong command', () {
       // "addition" is roughly equidistant to "detection" and "navigation",

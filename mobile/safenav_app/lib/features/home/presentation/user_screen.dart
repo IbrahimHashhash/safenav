@@ -21,7 +21,6 @@ class UserScreen extends StatefulWidget {
 
 class _UserScreenState extends State<UserScreen> {
   String _inputCaption = '';
-  String _replyCaption = '';
 
   void _onVoiceTap(VoiceAssistantState state) {
     final cubit = context.read<VoiceAssistantCubit>();
@@ -42,26 +41,25 @@ class _UserScreenState extends State<UserScreen> {
       listener: (context, state) {
         if (state is VoiceProcessing && state.input.isNotEmpty) {
           setState(() => _inputCaption = state.input);
-        } else if (state is VoiceSpeaking && state.text.isNotEmpty) {
-          setState(() => _replyCaption = state.text);
         } else if (state is VoiceIdle || state is VoiceListening) {
-          // A new turn (or going idle): drop the previous captions so they
-          // fade away instead of lingering statically on screen.
-          if (_inputCaption.isNotEmpty || _replyCaption.isNotEmpty) {
-            setState(() {
-              _inputCaption = '';
-              _replyCaption = '';
-            });
+          // A new turn (or going idle): drop the input caption so it fades
+          // away instead of lingering statically on screen.
+          if (_inputCaption.isNotEmpty) {
+            setState(() => _inputCaption = '');
           }
         }
       },
       builder: (context, state) {
         // Captions are not static: the "You said" card shows only while the
         // turn is being processed/spoken, and "Assistant" only while speaking.
+        // The reply text is read straight off the speaking state so it shows
+        // even for messages spoken before this screen subscribed (e.g. the
+        // launch welcome).
+        final replyText = state is VoiceSpeaking ? state.text : '';
         final showInput =
             (state is VoiceProcessing || state is VoiceSpeaking) &&
                 _inputCaption.isNotEmpty;
-        final showReply = state is VoiceSpeaking && _replyCaption.isNotEmpty;
+        final showReply = replyText.isNotEmpty;
 
         final cards = <Widget>[];
         if (showInput) {
@@ -81,7 +79,7 @@ class _UserScreenState extends State<UserScreen> {
             CaptionCard(
               key: const ValueKey('caption-reply'),
               label: 'Assistant',
-              text: _replyCaption,
+              text: replyText,
               icon: Icons.volume_up,
               accent: const Color(0xFF9C4DFF),
             ),

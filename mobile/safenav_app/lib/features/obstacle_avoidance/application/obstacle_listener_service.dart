@@ -9,6 +9,7 @@ import '../data/capture_log_service.dart';
 import '../data/datasources/navigation_ws_datasource.dart';
 import '../domain/entities/detection_result.dart';
 import 'detection_controller.dart';
+import 'speech_repeat_gate.dart';
 
 /// Outcome of attempting to start streaming, so the UI can show a precise
 /// message about what went wrong.
@@ -75,18 +76,10 @@ class ObstacleListenerService implements DetectionController {
   // When streaming, persist the very next streamed frame on a capture request.
   bool _saveNextFrame = false;
 
-  String _lastSpoken = '';
-  DateTime _lastSpokenAt = DateTime.fromMillisecondsSinceEpoch(0);
-  // Semantic fingerprint of the last spoken obstacle warning, so a new warning
-  // about the SAME obstacle in the SAME region at a near-identical distance is
-  // dropped instead of repeated.
-  String? _lastWarnLabel;
-  int? _lastWarnRegion;
-  double? _lastWarnDistance;
-
-  /// Two warnings are "nearly the same" if the obstacle distance differs by no
-  /// more than this (meters).
-  static const double _similarDistanceM = 0.5;
+  // Per-message cooldown: drops a repeat of the SAME guidance line (after
+  // normalizing away distances/punctuation) within [_repeatCooldown], even if
+  // other lines were spoken in between (handles flickering detections).
+  final SpeechRepeatGate _repeatGate = SpeechRepeatGate(_repeatCooldown);
 
   final StreamController<DetectionResult> _resultsController =
       StreamController<DetectionResult>.broadcast();
@@ -173,6 +166,7 @@ class ObstacleListenerService implements DetectionController {
 
     _running = true;
     _emitStreaming(true);
+    _repeatGate.reset();
     unawaited(_captureLoop());
     return StreamStartResult.started;
   }
@@ -365,38 +359,22 @@ class ObstacleListenerService implements DetectionController {
     }
   }
 
-  /// Speaks the frame's instruction unless it's a too-quick repeat of the same
-  /// warning. A new warning is DROPPED (within the cooldown) when it concerns
-  /// the same obstacle, in the same region, at a near-identical distance
-  /// (<= [_similarDistanceM]). A change of region, obstacle, or a distance
-  /// change > 0.5 m is always spoken.
+  /// Speaks the frame's instruction unless the SAME guidance is still within
+  /// its cooldown. De-duplication is keyed on the obstacle type + region (not
+  /// the distance), so "chair 3 meters ahead" then "chair 2 meters ahead" is
+  /// suppressed, while a different obstacle or region speaks immediately.
+  /// General lines without an obstacle (e.g. "path is clear") de-duplicate on
+  /// their normalized text.
   void _maybeSpeak(DetectionResult result) {
     final text = result.instruction.trim();
     if (text.isEmpty) return;
 
-    final now = DateTime.now();
-    final label = result.primaryLabel;
-    final region = result.primaryRegionIndex();
-    final distance = result.primaryDistanceMeters();
-
-    final sameRegion = region == _lastWarnRegion;
-    final sameLabel = label == _lastWarnLabel;
-    final distanceClose = distance != null &&
-        _lastWarnDistance != null &&
-        (distance - _lastWarnDistance!).abs() <= _similarDistanceM;
-    final nearlySimilar = sameRegion && sameLabel && distanceClose;
-    final identicalText = text == _lastSpoken;
-
-    if ((nearlySimilar || identicalText) &&
-        now.difference(_lastSpokenAt) < _repeatCooldown) {
-      return;
-    }
-
-    _lastSpoken = text;
-    _lastSpokenAt = now;
-    _lastWarnLabel = label;
-    _lastWarnRegion = region;
-    _lastWarnDistance = distance;
+    final key = SpeechRepeatGate.keyFor(
+      label: result.primaryLabel,
+      region: result.primaryRegionIndex(),
+      text: text,
+    );
+    if (!_repeatGate.allow(key, DateTime.now())) return;
 
     voiceCubit.speakObstacleInstruction(text);
   }

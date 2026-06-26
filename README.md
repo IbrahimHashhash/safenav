@@ -38,9 +38,8 @@
   app now begins capturing audio the moment the user taps, so nothing is missed.
 
   ### Cue sounds are reliable again
-  The short "start"/"stop" beeps sometimes failed to play or interfered with the
-  assistant's voice. They now play consistently and no longer disrupt speech.
-
+  addded a stop sound so the user knows when the state changes back to listening or idle 
+  
   ### Obstacle warnings stop repeating ("spamming")
   Warnings like "path likely blocked" or "chair 3 meters ahead" were being
   announced over and over. The app now announces a given warning once and then

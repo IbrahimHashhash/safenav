@@ -1,6 +1,7 @@
 import 'package:audioplayers/audioplayers.dart';
 import '../../mapbox_navigation/application/navigation_service.dart';
 import '../../obstacle_avoidance/application/detection_controller.dart';
+import '../../../core/constants/help_info_messages.dart';
 import '../../../core/services/profile/user_profile_service.dart';
 import '../../../core/services/speech_to_text/flutter_stt_service.dart';
 import '../../../core/services/speech_to_text/stt_service.dart';
@@ -79,6 +80,11 @@ class VoiceAssistantService {
     } catch (_) {}
     await _sttService.initialize();
   }
+
+  /// Speaks the welcome + how-to message (used on app launch and via "more
+  /// info"). Routed through the assistant speech path so guidance never talks
+  /// over it, and it becomes the "repeat" target until something else is said.
+  Future<void> playWelcome() => _speakReply(HelpInfoMessages.availableCommands);
 
   /// Attaches the obstacle-detection controller so voice commands can toggle
   /// detection. Wired after the listener is constructed.

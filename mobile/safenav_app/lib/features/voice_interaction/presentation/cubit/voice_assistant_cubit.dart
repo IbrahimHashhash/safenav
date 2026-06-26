@@ -10,6 +10,7 @@ class VoiceAssistantCubit extends Cubit<VoiceAssistantState> {
   }
 
   Future<void> initialize() => _service.initialize();
+  Future<void> playWelcome() => _service.playWelcome();
   Future<void> startListening() => _service.startListening();
   Future<void> cancelListening() => _service.cancelListening();
   Future<void> speakObstacleInstruction(String text) => _service.speakObstacleInstruction(text);

@@ -30,7 +30,11 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void initState() {
     super.initState();
-    context.read<VoiceAssistantCubit>().initialize();
+    final voice = context.read<VoiceAssistantCubit>();
+    voice.initialize();
+    // Greet the user on launch with the short how-to so they know how to
+    // interact (tap to talk, available commands).
+    voice.playWelcome();
     _streaming = widget.obstacleListener.isStreaming;
     // Keep the button in sync when detection is toggled by VOICE or stopped by
     // a network drop.

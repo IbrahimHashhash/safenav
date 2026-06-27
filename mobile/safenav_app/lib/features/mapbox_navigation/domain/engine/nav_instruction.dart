@@ -22,7 +22,20 @@ class NavInstruction {
   /// Critical instructions (turns, arrival) bypass the speech cooldown.
   final bool isCritical;
 
-  const NavInstruction._(this.kind, this.text, this.isCritical);
+  /// Remaining distance (meters) this instruction refers to, when meaningful —
+  /// set for "continue straight" so the engine can decide whether the distance
+  /// changed enough to re-announce. Null for turns, orientation and arrival.
+  ///
+  /// Deliberately NOT part of equality/hashCode: the [text] already encodes the
+  /// rounded distance, so equality stays "same kind + same spoken text".
+  final double? distanceMeters;
+
+  const NavInstruction._(
+    this.kind,
+    this.text,
+    this.isCritical, {
+    this.distanceMeters,
+  });
 
   @override
   bool operator ==(Object other) =>
@@ -49,7 +62,12 @@ class NavPhrasing {
     final text = isFinalLeg
         ? 'Continue straight ahead for $m $unit to your destination.'
         : 'Continue straight ahead for $m $unit.';
-    return NavInstruction._(NavInstructionKind.continueStraight, text, false);
+    return NavInstruction._(
+      NavInstructionKind.continueStraight,
+      text,
+      false,
+      distanceMeters: metersRemaining,
+    );
   }
 
   static NavInstruction turn(TurnDirection direction) {

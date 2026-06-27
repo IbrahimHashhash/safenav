@@ -54,6 +54,13 @@ class NavEngineConfig {
   /// fires, while the user is completing the turn (heading still settling).
   final Duration orientationSettle;
 
+  /// "Continue straight ahead" is re-announced only once the remaining distance
+  /// has changed by at least this much (meters). Smaller drifts are not
+  /// repeated, so the user isn't told a slightly different distance every few
+  /// seconds; larger progress (e.g. 20 m -> 10 m) is announced. Turns and
+  /// arrival are unaffected (they are always spoken).
+  final double continueDistanceChangeMeters;
+
   const NavEngineConfig({
     this.speechCooldown = const Duration(seconds: 5),
     this.reachableWindowMeters = 4.0,
@@ -62,6 +69,7 @@ class NavEngineConfig {
     this.turnAroundThresholdDeg = 135.0,
     this.orientationApproachMeters = 12.0,
     this.orientationSettle = const Duration(seconds: 5),
+    this.continueDistanceChangeMeters = 5.0,
   });
 }
 
@@ -203,16 +211,45 @@ class NavEngine {
     return raw < 0 ? 0.0 : raw;
   }
 
-  /// Applies cooldown (non-critical only) and de-duplication.
+  /// Applies cooldown (non-critical only), de-duplication, and distance-aware
+  /// gating of "continue straight".
   NavInstruction? _commit(NavInstruction inst, DateTime now) {
-    if (_lastSpoken != null && _lastSpoken == inst) {
+    // Turns and arrival are critical: they mark a real maneuver and must NEVER
+    // be suppressed as redundant — e.g. two left turns in a row must both be
+    // spoken, and a turn is never dropped just because distance barely changed.
+    if (inst.isCritical) {
+      _lastSpoken = inst;
+      _lastSpeakTime = now;
+      return inst;
+    }
+
+    // Exact same non-critical line as the previous one → don't repeat it
+    // back-to-back.
+    if (_lastSpoken == inst) {
       return null;
     }
-    if (!inst.isCritical &&
-        _lastSpeakTime != null &&
+
+    // Non-critical lines are rate-limited by the cooldown.
+    if (_lastSpeakTime != null &&
         now.difference(_lastSpeakTime!) < config.speechCooldown) {
       return null;
     }
+
+    // "Continue straight" repeats only on a MEANINGFUL distance change. Even
+    // after the cooldown, a drift smaller than the threshold is not repeated
+    // (so the user isn't told a slightly different distance every few seconds);
+    // it is re-announced once they have made real progress along the route.
+    if (inst.kind == NavInstructionKind.continueStraight &&
+        _lastSpoken?.kind == NavInstructionKind.continueStraight) {
+      final lastD = _lastSpoken?.distanceMeters;
+      final newD = inst.distanceMeters;
+      if (lastD != null &&
+          newD != null &&
+          (lastD - newD).abs() < config.continueDistanceChangeMeters) {
+        return null;
+      }
+    }
+
     _lastSpoken = inst;
     _lastSpeakTime = now;
     return inst;

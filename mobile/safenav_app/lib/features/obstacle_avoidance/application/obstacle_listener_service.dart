@@ -44,6 +44,13 @@ class ObstacleListenerService implements DetectionController {
   /// for this long so it isn't repeated every couple of seconds.
   static const Duration _repeatCooldown = Duration(seconds: 10);
 
+  /// Within the cooldown, the SAME obstacle (same type + region) is re-announced
+  /// only when its estimated distance changed by MORE than this much (meters).
+  /// A change of 0.5 m or less is treated as the same event and stays
+  /// suppressed; a larger approach (e.g. 10 m -> 5 m) is announced so the user
+  /// hears the updated distance.
+  static const double _obstacleDistanceChangeM = 0.5;
+
   /// A car closer than this (meters) is treated as an imminent collision and
   /// triggers a single vibration.
   static const double _carCollisionDistanceM = 2.5;
@@ -361,20 +368,37 @@ class ObstacleListenerService implements DetectionController {
 
   /// Speaks the frame's instruction unless the SAME guidance is still within
   /// its cooldown. De-duplication is keyed on the obstacle type + region (not
-  /// the distance), so "chair 3 meters ahead" then "chair 2 meters ahead" is
-  /// suppressed, while a different obstacle or region speaks immediately.
-  /// General lines without an obstacle (e.g. "path is clear") de-duplicate on
-  /// their normalized text.
+  /// the distance), but it is distance-AWARE: the same obstacle is re-announced
+  /// within the cooldown when its distance changed by at least
+  /// [_obstacleDistanceChangeM] (so "car 10 meters" -> "car 5 meters" speaks,
+  /// while a < 0.5 m drift stays suppressed). A different obstacle or region
+  /// speaks immediately. General lines without an obstacle (e.g. "path is
+  /// clear") de-duplicate on their normalized text, time-based only.
   void _maybeSpeak(DetectionResult result) {
     final text = result.instruction.trim();
     if (text.isEmpty) return;
 
+    final label = result.primaryLabel;
     final key = SpeechRepeatGate.keyFor(
-      label: result.primaryLabel,
+      label: label,
       region: result.primaryRegionIndex(),
       text: text,
     );
-    if (!_repeatGate.allow(key, DateTime.now())) return;
+
+    // Distance-aware de-duplication applies only to obstacle lines (which carry
+    // a distance). General lines fall back to pure time-based suppression.
+    final hasObstacle = (label ?? '').trim().isNotEmpty;
+    final distance = hasObstacle ? result.primaryDistanceMeters() : null;
+    final threshold = hasObstacle ? _obstacleDistanceChangeM : 0.0;
+
+    if (!_repeatGate.allow(
+      key,
+      DateTime.now(),
+      distance: distance,
+      distanceThreshold: threshold,
+    )) {
+      return;
+    }
 
     voiceCubit.speakObstacleInstruction(text);
   }

@@ -115,6 +115,63 @@ void main() {
     });
   });
 
+  group('distance-aware "continue straight"', () {
+    test('small distance drift is not re-announced even after the cooldown',
+        () {
+      final engine = NavEngine(straightRoute());
+      final first = engine.update(position: a, now: t0);
+      expect(first.instruction!.kind, NavInstructionKind.continueStraight);
+
+      // ~3 m further along, after the 5 s cooldown. The remaining distance
+      // barely changed (< 5 m), so it must NOT be re-announced.
+      const small = GeoPoint(31.9600, 35.180030);
+      final s = engine.update(
+          position: small, now: t0.add(const Duration(seconds: 6)));
+      expect(s.instruction, isNull);
+    });
+
+    test('meaningful progress (>= threshold) re-announces the new distance', () {
+      final engine = NavEngine(straightRoute());
+      engine.update(position: a, now: t0);
+
+      // ~14 m further along, after the cooldown: real progress -> re-announce.
+      const ahead = GeoPoint(31.9600, 35.180150);
+      final u = engine.update(
+          position: ahead, now: t0.add(const Duration(seconds: 6)));
+      expect(u.instruction, isNotNull);
+      expect(u.instruction!.kind, NavInstructionKind.continueStraight);
+    });
+  });
+
+  group('turns are never suppressed as redundant', () {
+    test('two consecutive left turns are both spoken', () {
+      // A->B east, B->C north (LEFT), C->D west (LEFT): two left turns in a row.
+      const aa = GeoPoint(31.9600, 35.1800);
+      const bb = GeoPoint(31.9600, 35.1820);
+      const cc = GeoPoint(31.9620, 35.1820);
+      const dd = GeoPoint(31.9620, 35.1800);
+      final route = RoutePath.build(
+        polyline: const [aa, bb, cc, dd],
+        maneuverNodes: const [bb, cc],
+      );
+      final engine = NavEngine(route);
+
+      engine.update(position: aa, now: t0);
+      final t1 =
+          engine.update(position: bb, now: t0.add(const Duration(seconds: 6)));
+      expect(t1.instruction!.kind, NavInstructionKind.turn);
+      expect(t1.instruction!.text, 'Turn left.');
+
+      // The second left turn has identical text; it must STILL be spoken.
+      final t2 = engine.update(
+          position: cc, now: t0.add(const Duration(seconds: 12)));
+      expect(t2.instruction, isNotNull);
+      expect(t2.instruction!.kind, NavInstructionKind.turn);
+      expect(t2.instruction!.text, 'Turn left.');
+      expect(engine.nextTurnIndex, 2);
+    });
+  });
+
   group('path-relative orientation corrections', () {
     test('fires "turn left to face the path" when facing the wrong way', () {
       final engine = NavEngine(straightRoute());

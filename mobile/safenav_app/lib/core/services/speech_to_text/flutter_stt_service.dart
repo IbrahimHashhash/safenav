@@ -48,7 +48,20 @@ class FlutterSttService implements SttService {
     encoder: AudioEncoder.pcm16bits,
     sampleRate: 16000,
     numChannels: 1,
-    androidConfig: AndroidRecordConfig(manageBluetooth: false),
+    // On-device audio conditioning applied BEFORE the PCM enters our buffer
+    // and is streamed to Azure. Because we feed Azure an externalAudioStream,
+    // Azure's own front-end DSP is bypassed, so the signal we capture must be
+    // cleaned here. These flags request the OS audio effects and degrade
+    // gracefully (no-op) on devices that don't implement them.
+    autoGain: true,
+    noiseSuppress: true,
+    echoCancel: true,
+    androidConfig: AndroidRecordConfig(
+      manageBluetooth: false,
+      // Selects the Android capture path tuned for speech recognition; this is
+      // also what lets the platform insert its tuned NS/AGC where supported.
+      audioSource: AndroidAudioSource.voiceRecognition,
+    ),
   );
 
   @override

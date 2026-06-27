@@ -8,6 +8,7 @@ import '../../features/voice_interaction/domain/usecases/extract_location_usecas
 import '../../features/voice_interaction/domain/usecases/parse_intent_usecase.dart';
 import '../../features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
 import '../../features/obstacle_avoidance/data/capture_log_service.dart';
+import '../../features/obstacle_avoidance/data/free_zone_preview_renderer.dart';
 import '../../features/google_navigation/data/google_route_repository.dart';
 import '../../features/mapbox_navigation/application/navigation_service.dart';
 import '../../features/mapbox_navigation/data/data_sources/mapbox_datasource.dart';
@@ -99,8 +100,14 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton<CameraFrameSource>(() => CameraFrameSourceImpl());
 
   sl.registerLazySingleton<GallerySaver>(() => GalGallerySaver());
+  sl.registerLazySingleton<FreeZonePreviewRenderer>(
+    () => const UiFreeZonePreviewRenderer(),
+  );
   sl.registerLazySingleton(() => WalkingSpeedTracker());
   sl.registerLazySingleton(
-    () => CaptureLogService(gallery: sl<GallerySaver>()),
+    () => CaptureLogService(
+      gallery: sl<GallerySaver>(),
+      freeZoneRenderer: sl<FreeZonePreviewRenderer>(),
+    ),
   );
 }

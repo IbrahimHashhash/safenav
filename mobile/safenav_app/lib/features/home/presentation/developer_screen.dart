@@ -54,6 +54,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   NavProvider _navProvider = NavProvider.mapbox;
   late final WalkingSpeedTracker _speed;
   bool _hqPreviews = false;
+  bool _testView = false;
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -164,6 +165,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              _viewToggle(),
+              const SizedBox(height: 12),
+              if (_testView)
+                _testRecordingView()
+              else ...[
               Row(
                 children: [
                   Expanded(
@@ -299,7 +305,149 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 title: 'Performance metrics',
                 child: _metrics(),
               ),
+              ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- View toggle (full dev vs. compact test-recording layout) ------------
+
+  Widget _viewToggle() {
+    return SegmentedButton<bool>(
+      segments: const [
+        ButtonSegment(
+          value: false,
+          label: Text('Full dev'),
+          icon: Icon(Icons.dashboard_customize),
+        ),
+        ButtonSegment(
+          value: true,
+          label: Text('Test recording'),
+          icon: Icon(Icons.fiber_manual_record),
+        ),
+      ],
+      selected: {_testView},
+      showSelectedIcon: false,
+      onSelectionChanged: (s) => setState(() => _testView = s.first),
+    );
+  }
+
+  /// Compact, single-screen layout for recording test runs: the delivered
+  /// instruction, the key metrics, the camera preview (YOLO boxes from the
+  /// server) with a very faded free-zone band, and per-region clearance cards.
+  Widget _testRecordingView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CaptionCard(
+          label: 'Delivered instruction',
+          text: _lastSpoken,
+          icon: Icons.record_voice_over,
+          accent: _accent,
+        ),
+        const SizedBox(height: 12),
+        _statusStrip(),
+        const SizedBox(height: 12),
+        _yoloWithFadedBand(),
+        _clearanceCards(),
+      ],
+    );
+  }
+
+  /// The server's YOLO preview (with bounding boxes) as the camera image, with
+  /// the free-zone band drawn very faded on top so both are visible at once.
+  Widget _yoloWithFadedBand() {
+    final bytes = _lastYolo;
+    final zones = _result?.freeZones ?? const <FreeZone>[];
+    final skipped = _result?.skipped == true;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.42,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (bytes != null)
+            Image.memory(bytes, gaplessPlayback: true, fit: BoxFit.contain)
+          else if (widget.streaming)
+            const Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+            )
+          else
+            const Center(
+              child: Text(
+                'Start streaming to see the preview',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          if (zones.isNotEmpty)
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final h = constraints.maxHeight;
+                  // Same horizon-centred band as the server's analysis.
+                  return Padding(
+                    padding: EdgeInsets.only(top: h * 0.10, bottom: h * 0.28),
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < zones.length; i++)
+                          Expanded(
+                            child: _fadedRegionCell(zones[i], i, zones.length),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          Positioned(
+            left: 8,
+            top: 8,
+            child: _badge(
+              skipped ? 'Skipped · last frame' : 'YOLO + free-zones',
+              skipped ? Colors.orangeAccent : _accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A single, very faded free-zone band cell for the test-recording overlay.
+  Widget _fadedRegionCell(FreeZone zone, int index, int count) {
+    final color = zone.free ? Colors.green : Colors.red;
+    return Container(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16), // very faded so the frame shows
+        border: Border(
+          right: index < count - 1
+              ? BorderSide(color: Colors.white.withValues(alpha: 0.18))
+              : BorderSide.none,
+        ),
+      ),
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          zone.label ?? 'R${index + 1}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            shadows: [Shadow(blurRadius: 2, color: Colors.black)],
           ),
         ),
       ),

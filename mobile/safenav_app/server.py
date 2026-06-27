@@ -8,11 +8,12 @@ Wire protocol
 -------------
 Client -> server (preferred, binary frame):
     [0:4]   uint32 BE frame_id
-    [4]     uint8 flags  (bit 0 = include depth preview in the response)
+    [4]     uint8 flags  (bit 0 = return preview images; bit 1 = high quality:
+                          full-resolution previews, no downscale)
     [5:]    raw JPEG bytes of the camera frame
 
 Client -> server (legacy, text frame):
-    JSON  {"frame_id": int, "include_depth": bool, "frame": <base64 JPEG>}
+    JSON  {"frame_id": int, "include_depth": bool, "hq": bool, "frame": <base64 JPEG>}
 
 Server -> client (always):
     text JSON response (see :data:`RESPONSE_SCHEMA_DOC`).
@@ -68,7 +69,7 @@ from utils.navigation import (
 # --------------------------------------------------------------------------- #
 DAV2_VARIANT     = os.environ.get("DAV2_VARIANT", "vitb")    # vits | vitb | vitl
 DAV2_INPUT_SIZE  = int(os.environ.get("DAV2_INPUT_SIZE", 392))
-DAV2_MAX_DEPTH_M = 15 # float(os.environ.get("DAV2_MAX_DEPTH_M", 80.0))
+DAV2_MAX_DEPTH_M = 16 # float(os.environ.get("DAV2_MAX_DEPTH_M", 80.0))
 
 YOLO_VARIANT     = os.environ.get("YOLO_VARIANT", "yolo11s")
 YOLO_INPUT_SIZE  = int(os.environ.get("YOLO_INPUT_SIZE", 512))
@@ -106,12 +107,16 @@ SAM_DEBUG_EVERY  = int(os.environ.get("SAM_DEBUG_EVERY", 60))  # ...every N fram
 # absolute difference is below FRAME_SKIP_MAD the frame is considered unchanged
 # and we reuse the previous result instead of re-running the models.
 FRAME_SKIP_ENABLED    = os.environ.get("FRAME_SKIP", "1") == "1"
-FRAME_SKIP_MAD        = float(os.environ.get("FRAME_SKIP_MAD", 30.0))  # 0-255 scale; previously it was 3.0
+FRAME_SKIP_MAD        = float(os.environ.get("FRAME_SKIP_MAD", 20.0))  # 0-255 scale; previously it was 3.0
 FRAME_SKIP_MAX_CONSEC = int(os.environ.get("FRAME_SKIP_MAX_CONSEC", 30))  # force refresh
 FRAME_SIG_DIM         = 32       # signature is FRAME_SIG_DIM x FRAME_SIG_DIM gray
 
 DEPTH_PREVIEW_MAX_DIM = 320      # resize depth preview before JPEG encoding
-DEPTH_PREVIEW_QUALITY = 70       # JPEG quality for depth preview
+DEPTH_PREVIEW_QUALITY = 70       # JPEG quality for downscaled previews
+HQ_PREVIEW_QUALITY = 95          # JPEG quality for high-quality (full-res) previews
+# request-flags byte (client -> server) bits:
+REQ_PREVIEWS_FLAG = 0x01         # bit 0 = send preview images back (== DEPTH_FLAG)
+REQ_HQ_FLAG       = 0x02         # bit 1 = previews at full resolution (no downscale)
 DEPTH_FLAG = 0x01                # bit 0 of flags byte = depth preview follows
 SEG_FLAG   = 0x02                # bit 1 = SAM ground-segmentation preview follows
 YOLO_FLAG  = 0x04                # bit 2 = YOLO detection preview follows
@@ -282,6 +287,7 @@ def _decode_frame_message(message) -> dict:
         return {
             "frame_id": int.from_bytes(raw_bytes[:4], "big"),
             "include_depth": bool(raw_bytes[4] & DEPTH_FLAG),
+            "hq": bool(raw_bytes[4] & REQ_HQ_FLAG),
             "frame_bytes": raw_bytes[HEADER_SIZE:],
         }
 
@@ -293,6 +299,7 @@ def _decode_frame_message(message) -> dict:
     return {
         "frame_id": int(payload.get("frame_id", 0)),
         "include_depth": bool(payload.get("include_depth", False)),
+        "hq": bool(payload.get("hq", False)),
         "frame_bytes": base64.b64decode(payload["frame"]),
     }
 
@@ -347,52 +354,80 @@ def _colorize_depth(depth: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap((norm * 255.0).astype(np.uint8), cv2.COLORMAP_INFERNO)
 
 
-def _encode_preview_bgr(img: np.ndarray) -> bytes | None:
-    """Downscale a BGR image and JPEG-encode it. Returns raw JPEG bytes."""
-    # downscale to keep bandwidth and encode time low
-    h, w = img.shape[:2]
-    scale = DEPTH_PREVIEW_MAX_DIM / float(max(h, w))
-    if scale < 1.0:
-        img = cv2.resize(
-            img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA,
-        )
-    ok, buf = cv2.imencode(
-        ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, DEPTH_PREVIEW_QUALITY],
-    )
+def _encode_preview_bgr(img: np.ndarray, hq: bool = False) -> bytes | None:
+    """JPEG-encode a BGR image. Downscales for bandwidth unless hq=True, in
+    which case the full original resolution is kept at high JPEG quality."""
+    if not hq:
+        # downscale to keep bandwidth and encode time low
+        h, w = img.shape[:2]
+        scale = DEPTH_PREVIEW_MAX_DIM / float(max(h, w))
+        if scale < 1.0:
+            img = cv2.resize(
+                img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA,
+            )
+    quality = HQ_PREVIEW_QUALITY if hq else DEPTH_PREVIEW_QUALITY
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
     return buf.tobytes() if ok else None
 
 
-def _encode_depth_preview(depth: np.ndarray) -> bytes | None:
+def _encode_depth_preview(depth: np.ndarray, hq: bool = False) -> bytes | None:
     """Colourise + JPEG-encode a depth map. Returns raw JPEG bytes (no base64)."""
-    return _encode_preview_bgr(_colorize_depth(depth))
+    return _encode_preview_bgr(_colorize_depth(depth), hq)
 
 
-def _encode_seg_preview(frame: np.ndarray, ground_mask: np.ndarray | None) -> bytes | None:
+def _encode_seg_preview(frame: np.ndarray, ground_mask: np.ndarray | None,
+                        hq: bool = False) -> bytes | None:
     """Tint SAM's ground pixels red over the frame so the mask is verifiable."""
     if ground_mask is None:
         return None
     overlay = frame.copy()
     overlay[ground_mask] = (0, 0, 255)  # BGR red where SAM marked ground
     blended = cv2.addWeighted(frame, 0.6, overlay, 0.4, 0.0)
-    return _encode_preview_bgr(blended)
+    return _encode_preview_bgr(blended, hq)
 
 
-def _hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
-    h = hex_color.lstrip("#")
-    return (int(h[4:6], 16), int(h[2:4], 16), int(h[0:2], 16))  # B, G, R
+# urgency -> BGR bounding-box colour for the YOLO preview
+_URGENCY_COLOR = {
+    "CRITICAL": (0, 0, 255),     # red
+    "HIGH":     (0, 165, 255),   # orange
+    "MEDIUM":   (0, 255, 255),   # yellow
+    "LOW":      (0, 255, 0),     # green
+}
 
 
-def _encode_yolo_preview(frame: np.ndarray, detections: list[dict]) -> bytes | None:
-    """Draw every YOLO detection (box + label + confidence) over the frame."""
+def _encode_yolo_preview(frame: np.ndarray, obstacles: list[dict],
+                         hq: bool = False) -> bytes | None:
+    """Draw each pipeline obstacle: box + name + distance + confidence.
+
+    Drawn from the navigation obstacles (which carry the calibrated distance),
+    coloured by urgency. Font/box thickness scale with the frame height so the
+    labels stay legible at full (hq) resolution.
+    """
     vis = frame.copy()
-    for d in detections:
-        x1, y1, x2, y2 = (int(v) for v in d["bbox"])
-        color = _hex_to_bgr(d.get("color", "#00FF00"))
-        cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
-        text = f"{d.get('label', '')} {d.get('confidence', 0.0):.2f}"
-        cv2.putText(vis, text, (x1, max(12, y1 - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-    return _encode_preview_bgr(vis)
+    h = vis.shape[0]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    fs = max(0.45, h / 1100.0)          # adaptive font scale
+    th = max(1, round(h / 500.0))       # adaptive line/box thickness
+    for ob in obstacles:
+        bx = ob.get("bbox_px") or ob.get("bbox")
+        if not bx:
+            continue
+        x1, y1, x2, y2 = (int(v) for v in bx[:4])
+        color = _URGENCY_COLOR.get(ob.get("urgency"), (0, 255, 0))
+        cv2.rectangle(vis, (x1, y1), (x2, y2), color, th)
+
+        dist = ob.get("distance_m")
+        dist_txt = f"{float(dist):.1f}m" if dist is not None else "?m"
+        text = f"{ob.get('label', '?')} {dist_txt} {float(ob.get('confidence', 0.0)):.2f}"
+
+        (tw, tht), base = cv2.getTextSize(text, font, fs, th)
+        y_text = y1 - 6 if (y1 - tht - base - 4) > 0 else y2 + tht + base + 4
+        # filled background so the label is readable over any scene
+        cv2.rectangle(vis, (x1, y_text - tht - base),
+                      (x1 + tw, y_text + base), color, -1)
+        cv2.putText(vis, text, (x1, y_text), font, fs,
+                    (255, 255, 255), max(1, th - 1), cv2.LINE_AA)
+    return _encode_preview_bgr(vis, hq)
 
 
 def _encode_mask_preview(ground_mask: np.ndarray | None) -> bytes | None:
@@ -408,7 +443,8 @@ def _encode_mask_preview(ground_mask: np.ndarray | None) -> bytes | None:
     return buf.tobytes() if ok else None
 
 
-def _encode_freezones_preview(frame: np.ndarray, free_zones: dict | None) -> bytes | None:
+def _encode_freezones_preview(frame: np.ndarray, free_zones: dict | None,
+                              hq: bool = False) -> bytes | None:
     """Draw the 5 free-zone lanes + horizon band over the frame so the depth-only
     free-zone analysis can be inspected (green = clear/walkable, red = blocked;
     each lane labelled with its calibrated clearance in metres)."""
@@ -436,7 +472,7 @@ def _encode_freezones_preview(frame: np.ndarray, free_zones: dict | None) -> byt
         txt = f"{z.get('clearance_m', '?')}m"
         cv2.putText(vis, txt, (edges[i] + 3, band_bot - 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
-    return _encode_preview_bgr(vis)
+    return _encode_preview_bgr(vis, hq)
 
 
 # --------------------------------------------------------------------------- #
@@ -759,11 +795,12 @@ async def navigation_ws(websocket: WebSocket) -> None:
             # ---- 5) encode previews (if requested) -----------------------
             t_encode = time.perf_counter()
             if include_depth:
-                depth_jpeg = _encode_depth_preview(depth_map)
-                seg_jpeg = _encode_seg_preview(frame, ground_mask)
-                yolo_jpeg = _encode_yolo_preview(frame, detections)
+                hq = payload["hq"]
+                depth_jpeg = _encode_depth_preview(depth_map, hq)
+                seg_jpeg = _encode_seg_preview(frame, ground_mask, hq)
+                yolo_jpeg = _encode_yolo_preview(frame, result["obstacles"], hq)
                 mask_png = _encode_mask_preview(ground_mask)
-                freezone_jpeg = _encode_freezones_preview(frame, result["free_zones"])
+                freezone_jpeg = _encode_freezones_preview(frame, result["free_zones"], hq)
             else:
                 depth_jpeg = seg_jpeg = yolo_jpeg = mask_png = freezone_jpeg = None
             encode_ms = (time.perf_counter() - t_encode) * 1000.0

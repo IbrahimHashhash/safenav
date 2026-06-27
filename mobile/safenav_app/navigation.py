@@ -337,7 +337,23 @@ def run_detection_pipeline(
     # action words ("step", "veer", "continue ahead", ...). Examples:
     #   "Path clear."   |   "car ahead 3.0 m — left clear"
     if highest_priority is None:
-        instruction = "Path clear."
+        # No YOLO obstacle -- but the depth-only free-zone analysis may still
+        # show the forward corridor blocked (a wall, a pole, or an object YOLO
+        # has no class for). Warn instead of claiming the path is clear.
+        if free_zones["centre"]["clear"]:
+            instruction = "Path clear."
+        else:
+            left_clear = (free_zones["left"]["clear"]
+                          or free_zones["slight_left"]["clear"])
+            right_clear = (free_zones["right"]["clear"]
+                           or free_zones["slight_right"]["clear"])
+            clear_names = [n for n, ok in (("left", left_clear),
+                                           ("right", right_clear)) if ok]
+            if clear_names:
+                instruction = (f"Path likely blocked ahead {_EM_DASH} "
+                               f"{' and '.join(clear_names)} clear")
+            else:
+                instruction = "Path likely blocked ahead."
     else:
         label = highest_priority["label"] or "obstacle"
         region = highest_priority["region"]

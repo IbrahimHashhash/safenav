@@ -18,6 +18,10 @@ import '../../voice_interaction/presentation/cubit/voice_assistant_state.dart';
 
 enum _ModelPreview { yolo, depth, freeZone }
 
+/// Which developer layout is shown: the full debug screen, the obstacle
+/// detection test-recording view, or the GPS navigation recording view.
+enum _DevView { full, detection, gps }
+
 /// Developer/debug screen: live camera preview, the navigation map with the
 /// current coordinates, a caption of the last spoken instruction (navigation
 /// or obstacle), per-model preview images from the server, the detected
@@ -54,7 +58,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   NavProvider _navProvider = NavProvider.mapbox;
   late final WalkingSpeedTracker _speed;
   bool _hqPreviews = false;
-  bool _testView = false;
+  _DevView _view = _DevView.full;
+  // True when this screen started the camera just for the GPS scene preview
+  // (so we release it on leave/dispose, but never while streaming owns it).
+  bool _camPreviewStartedByMe = false;
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -106,6 +113,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     _sub?.cancel();
     _captureSub?.cancel();
     _speed.stop();
+    // Release the camera only if we started it for the GPS preview and the
+    // streaming pipeline isn't using it.
+    if (_camPreviewStartedByMe && !widget.streaming) {
+      widget.listener.cameraSource.dispose();
+    }
     super.dispose();
   }
 
@@ -167,8 +179,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             children: [
               _viewToggle(),
               const SizedBox(height: 12),
-              if (_testView)
+              if (_view == _DevView.detection)
                 _testRecordingView()
+              else if (_view == _DevView.gps)
+                _gpsRecordingView()
               else ...[
               Row(
                 children: [
@@ -316,22 +330,113 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   // --- View toggle (full dev vs. compact test-recording layout) ------------
 
   Widget _viewToggle() {
-    return SegmentedButton<bool>(
+    return SegmentedButton<_DevView>(
       segments: const [
         ButtonSegment(
-          value: false,
-          label: Text('Full dev'),
+          value: _DevView.full,
+          label: Text('Full'),
           icon: Icon(Icons.dashboard_customize),
         ),
         ButtonSegment(
-          value: true,
-          label: Text('Test recording'),
+          value: _DevView.detection,
+          label: Text('Detect'),
           icon: Icon(Icons.fiber_manual_record),
         ),
+        ButtonSegment(
+          value: _DevView.gps,
+          label: Text('GPS'),
+          icon: Icon(Icons.navigation),
+        ),
       ],
-      selected: {_testView},
+      selected: {_view},
       showSelectedIcon: false,
-      onSelectionChanged: (s) => setState(() => _testView = s.first),
+      onSelectionChanged: (s) => _setView(s.first),
+    );
+  }
+
+  void _setView(_DevView view) {
+    final leavingGps = _view == _DevView.gps && view != _DevView.gps;
+    setState(() => _view = view);
+    if (view == _DevView.gps) {
+      _ensureCameraPreview();
+    } else if (leavingGps) {
+      _releaseCameraPreviewIfMine();
+    }
+  }
+
+  /// Turns the camera on for the GPS scene preview WITHOUT streaming to the
+  /// server. No-op if streaming already owns the camera.
+  Future<void> _ensureCameraPreview() async {
+    final cam = widget.listener.cameraSource;
+    if (cam.isReady) return;
+    final ok = await cam.initialize();
+    if (ok) _camPreviewStartedByMe = true;
+    if (mounted) setState(() {});
+  }
+
+  /// Releases the camera only if this screen started it and streaming isn't
+  /// using it.
+  Future<void> _releaseCameraPreviewIfMine() async {
+    if (_camPreviewStartedByMe && !widget.streaming) {
+      _camPreviewStartedByMe = false;
+      await widget.listener.cameraSource.dispose();
+      if (mounted) setState(() {});
+    }
+  }
+
+  // --- GPS navigation recording view ---------------------------------------
+
+  /// One-screen layout for recording GPS navigation: the camera scene (not
+  /// streamed to the server), the live map with route, the moving orientation
+  /// cursor, and the spoken navigation instruction.
+  Widget _gpsRecordingView() {
+    final h = MediaQuery.of(context).size.height;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _compactInstruction(),
+        const SizedBox(height: 8),
+        _scenePreview(h * 0.26),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: h * 0.42,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: const NavigationMapView(showCoordinates: true),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Live camera preview for the scene only (no frames sent to the server).
+  Widget _scenePreview(double height) {
+    final cam = widget.listener.cameraSource;
+    final ready = cam.isReady && cam.previewSize != null;
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ready
+            ? FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: cam.previewSize!.height,
+                  height: cam.previewSize!.width,
+                  child: cam.buildPreview(),
+                ),
+              )
+            : Container(
+                color: Colors.white10,
+                alignment: Alignment.center,
+                child: const Text(
+                  'Starting camera…',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+      ),
     );
   }
 
@@ -342,18 +447,187 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        CaptionCard(
-          label: 'Delivered instruction',
-          text: _lastSpoken,
-          icon: Icons.record_voice_over,
-          accent: _accent,
-        ),
-        const SizedBox(height: 12),
-        _statusStrip(),
-        const SizedBox(height: 12),
+        _compactInstruction(),
+        const SizedBox(height: 8),
+        _compactHighestPriority(),
+        const SizedBox(height: 8),
+        _compactMetrics(),
+        const SizedBox(height: 8),
         _yoloWithFadedBand(),
         _clearanceCards(),
       ],
+    );
+  }
+
+  /// Compact row for the highest-priority detected obstacle: label, confidence
+  /// and (calibrated) distance.
+  Widget _compactHighestPriority() {
+    final r = _result;
+    final hp = r?.highestPriority;
+    final conf =
+        hp != null ? '${(hp.confidence * 100).toStringAsFixed(0)}%' : '—';
+    final distValue = hp?.distanceMeters ?? r?.primaryDistanceMeters();
+    final dist = distValue != null ? '${distValue.toStringAsFixed(1)} m' : '—';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orangeAccent.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.report, size: 16, color: Colors.orangeAccent),
+          const SizedBox(width: 8),
+          const Text(
+            'TOP OBSTACLE',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              hp == null ? 'none (depth-only)' : hp.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+            ),
+          ),
+          _miniChip(conf),
+          const SizedBox(width: 6),
+          _miniChip(dist, color: Colors.cyanAccent),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniChip(String text, {Color color = Colors.white}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  /// Compact one/two-line delivered-instruction strip for the test view.
+  Widget _compactInstruction() {
+    final text = _lastSpoken.isEmpty ? '—' : _lastSpoken;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _accent.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.record_voice_over, size: 16, color: _accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Small 3-up metric tiles (frame id, status, latency, MAD, fps, server ms)
+  /// so the whole test view fits on one screen.
+  Widget _compactMetrics() {
+    final r = _result;
+    final skipped = r?.skipped == true;
+    final tiles = <Widget>[
+      _miniStat('Frame', r != null ? '#${r.frameId}' : '—'),
+      _miniStat(
+        'Status',
+        r == null ? '—' : (skipped ? 'Skipped' : 'Processed'),
+        color: r == null
+            ? Colors.white
+            : (skipped ? Colors.orangeAccent : Colors.lightGreenAccent),
+      ),
+      _miniStat(
+        'End-to-end',
+        r?.endToEndMs != null ? '${r!.endToEndMs!.toStringAsFixed(0)} ms' : '—',
+        color: Colors.amberAccent,
+      ),
+      _miniStat('MAD', r?.mad != null ? r!.mad!.toStringAsFixed(2) : '—'),
+      _miniStat(
+        'Server FPS',
+        r?.metrics.serverFps != null
+            ? r!.metrics.serverFps!.toStringAsFixed(1)
+            : '—',
+      ),
+      _miniStat(
+        'Server ms',
+        r?.metrics.totalMs != null
+            ? r!.metrics.totalMs!.toStringAsFixed(0)
+            : '—',
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = (constraints.maxWidth - 2 * 8) / 3;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [for (final t in tiles) SizedBox(width: width, child: t)],
+        );
+      },
+    );
+  }
+
+  Widget _miniStat(String label, String value, {Color color = Colors.white}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -365,7 +639,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     final skipped = _result?.skipped == true;
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.42,
+      height: MediaQuery.of(context).size.height * 0.36,
       width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.black26,

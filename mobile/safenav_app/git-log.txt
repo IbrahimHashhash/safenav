@@ -1,0 +1,23 @@
+* fd19260 (HEAD -> server-conn-and-final-optimisations, origin/server-conn-and-final-optimisations) feat: add a compact test-recording view toggle
+* faed474 feat: log free-zones to CSV and save a free-zone preview to gallery
+* b4590e6 feat: request high-quality previews for saved single-frame captures
+| *   aa3014e (origin/improve-usability) Merge branch 'improve-usability' of https://github.com/MaysHroub/safenav into improve-usability
+| |\  
+| | * e683335 Update README.md
+| | * 23136ac Update README.md
+| * | 799168c feat: enable noise suppresion
+| |/  
+| * 216c419 feat: add 'change my name' command
+| * e45706b feat: add transcript to the welcome message
+| * b9d0b2f feat: add welcome message when app starts
+| * fe06785 fix: repeat last instruction at a global level
+| * f4d254f fix cooldown
+| * 144a41c feat: more robust string matching
+| * e993172 fix: start mic before azure tts is set
+| * 5f2346f feat: change to listening when speaking
+| * 5d17843 ui: make ui nonclickable and make it only appear when listening and speaking
+| * e6442d9 feat: add cooldown on similar avoidance instructions
+| * a8b868b feat: add interrupt beep sound
+|/  
+* cb424a9 fix: drop near-duplicate obstacle warnings; push-to-talk interrupts speech
+* 51fd37e fix: vibrate for a near car using highest_priority + region clearance

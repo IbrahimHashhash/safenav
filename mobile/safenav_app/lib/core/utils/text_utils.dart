@@ -15,6 +15,48 @@ class TextUtils {
     return similarity <= threshold;
   }
 
+  /// Length-aware match for command keywords. Short words must match (almost)
+  /// exactly; only longer words tolerate edits. This prevents false matches
+  /// between short look-alikes (e.g. "hell"/"help", "on"/"in") while still
+  /// catching mistranscriptions of longer words (e.g. "navigation"/"navigate").
+  static bool isSimilarWord(String a, String b) {
+    if (a == b) return true;
+    final maxLen = a.length > b.length ? a.length : b.length;
+    final allowed = maxLen <= 5
+        ? 0
+        : maxLen <= 7
+            ? 1
+            : 2;
+    return levenshtein(a, b) <= allowed;
+  }
+
+  /// Phrase-level similarity (0..1) that is phonetic-aware and ungated, suited
+  /// to ranking a spoken phrase against canonical command phrases. Unlike
+  /// [tokenSetSimilarity], it does NOT drop weakly-matching tokens, so it keeps
+  /// the discrimination needed to pick the closest command.
+  static double phraseSimilarity(String a, String b) {
+    final aw = a.split(' ').where((w) => w.isNotEmpty).toList();
+    final bw = b.split(' ').where((w) => w.isNotEmpty).toList();
+    if (aw.isEmpty || bw.isEmpty) return 0;
+    final precision = _avgBestMatch(aw, bw);
+    final recall = _avgBestMatch(bw, aw);
+    if (precision + recall == 0) return 0;
+    return 2 * precision * recall / (precision + recall);
+  }
+
+  static double _avgBestMatch(List<String> from, List<String> to) {
+    double total = 0;
+    for (final f in from) {
+      double best = 0;
+      for (final t in to) {
+        final s = tokenSimilarity(f, t);
+        if (s > best) best = s;
+      }
+      total += best;
+    }
+    return total / from.length;
+  }
+
   static double ratio(String a, String b) {
     final maxLen = a.length > b.length ? a.length : b.length;
     if (maxLen == 0) return 1;
@@ -98,8 +140,12 @@ class TextUtils {
       (i) => List.filled(b.length + 1, 0),
     );
 
-    for (int i = 0; i <= a.length; i++) dp[i][0] = i;
-    for (int j = 0; j <= b.length; j++) dp[0][j] = j;
+    for (int i = 0; i <= a.length; i++) {
+      dp[i][0] = i;
+    }
+    for (int j = 0; j <= b.length; j++) {
+      dp[0][j] = j;
+    }
 
     for (int i = 1; i <= a.length; i++) {
       for (int j = 1; j <= b.length; j++) {

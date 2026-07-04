@@ -20,18 +20,35 @@ class VoiceConstants {
   ];
   
   static const listTriggers = [
-    'list', 'show', 'available', 'what', 'give',
+    'list', 'locations', 'location', 'places', 'place',
   ];
 
   static const startNavigationTriggers = [
-    'start', 'begin', 'commence',
+    'start', 'begin', 'commence', 'enable', 'on',
   ];
 
   static const stopNavigationTriggers = [
-    'stop', 'cancel', 'end', 'quit', 'halt',
+    'stop', 'cancel', 'end', 'quit', 'halt', 'disable', 'off',
+  ];
+
+  static const detectionTriggers = [
+    'detection', 'obstacle', 'obstacles', 'detect',
   ];
 
   static const nextInstructionTriggers = [
     'next', 'continue', 'proceed',
   ];
+
+  static const greetingTriggers = [
+    'hi', 'hello', 'hey', 'hiya', 'howdy', 'greetings', 'helo', 'hii',
+    'morning', 'afternoon', 'evening',
+  ];
+
+  /// Verbs that, together with "name" (or the standalone "rename"), request a
+  /// name change, e.g. "change my name", "update my name", "rename me".
+  static const changeNameTriggers = [
+    'change', 'rename', 'update', 'reset', 'edit',
+  ];
+
+  static const nameWordTriggers = ['name'];
 }

@@ -3,10 +3,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'core/di/injection.dart';
 
-import 'features/obstacle_avoidance/data/datasources/obstacle_sse_datasource.dart';
+import 'core/services/camera/camera_frame_source.dart';
+import 'features/obstacle_avoidance/data/datasources/navigation_ws_datasource.dart';
+import 'features/obstacle_avoidance/data/capture_log_service.dart';
 import 'features/obstacle_avoidance/application/obstacle_listener_service.dart';
+import 'features/voice_interaction/application/voice_assistant_service.dart';
 import 'features/voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
-import 'features/voice_interaction/presentation/pages/voice_assistant_page.dart';
+import 'features/home/presentation/home_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,9 +19,15 @@ void main() async {
   final voiceCubit = VoiceAssistantCubit(sl());
 
   final obstacleListener = ObstacleListenerService(
-    datasource: sl<ObstacleSseDatasource>(),
+    datasource: sl<NavigationWebSocketDatasource>(),
+    cameraSource: sl<CameraFrameSource>(),
     voiceCubit: voiceCubit,
+    captureLog: sl<CaptureLogService>(),
   );
+
+  // Let voice commands ("start/stop detection") control the listener, and keep
+  // the dev-screen button in sync via the listener's streaming stream.
+  sl<VoiceAssistantService>().detectionController = obstacleListener;
 
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));
 }
@@ -53,7 +62,9 @@ class _MyAppState extends State<MyApp> {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark(),
-        home: const VoiceAssistantPage(),
+        home: HomeShell(
+          obstacleListener: widget.obstacleListener,
+        ),
       ),
     );
   }

@@ -36,7 +36,7 @@ class _IdleViewState extends State<IdleView>
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Idle. Hold anywhere to speak',
+      label: 'Idle. Tap anywhere to speak',
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -74,7 +74,7 @@ class _IdleViewState extends State<IdleView>
             ),
             const SizedBox(height: 28),
             const Text(
-              'Hold anywhere to speak',
+              'Tap anywhere to speak',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,

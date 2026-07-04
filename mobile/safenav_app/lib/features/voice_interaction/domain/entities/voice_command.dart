@@ -5,6 +5,10 @@ enum VoiceCommandType {
   listLocations,
   startNavigation,
   stopNavigation,
+  startDetection,
+  stopDetection,
   nextInstruction,
+  greeting,
+  changeName,
   unknown,
 }

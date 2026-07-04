@@ -4,68 +4,99 @@ import 'package:geolocator/geolocator.dart';
 
 import '../../../core/services/compass/compass_service.dart';
 import '../../../shared/models/location.dart';
+import '../domain/engine/geo_point.dart';
+import '../domain/engine/heading_filter.dart';
+import '../domain/engine/nav_engine.dart';
+import '../domain/engine/route_path.dart';
+import '../domain/entities/navigation_snapshot.dart';
 import '../domain/entities/route_entity.dart';
-import '../domain/entities/turn_by_turn_step.dart';
 import '../domain/usecases/get_route_usecase.dart';
-import 'navigation_helpers.dart';
 
+/// Which directions API generates the route. The post-processing engine is the
+/// same for both — only the route geometry/maneuvers come from a different API.
+enum NavProvider { mapbox, google }
+
+/// Pedestrian turn-by-turn navigation engine.
+///
+/// The post-processing (route model, turn classification, distances,
+/// orientation, speech vocabulary, cooldown/dedup) is the pure-Dart engine
+/// under `domain/engine` (ported from the Google-nav reference so the two apps
+/// behave identically). This service is the platform boundary: it builds a
+/// [RoutePath] from the Mapbox route, feeds GPS + compass events into the
+/// [NavEngine] and [HeadingFilter], speaks whatever the engine emits, and
+/// publishes a [NavigationSnapshot] for the map UI.
 class NavigationService {
-  static const double _maneuverProximity = 8.0;
-  static const double _arrivalThreshold = 10.0;
   static const double _offRouteThreshold = 25.0;
   static const int _offRouteFixesRequired = 3;
-  static const Duration _readyDelay = Duration(seconds: 3);
-  static const Duration _periodicInterval = Duration(seconds: 18);
-  static const Duration _minBetweenAnnouncements = Duration(seconds: 3);
-  static const Duration _alignmentCooldown = Duration(seconds: 8);
-  static const double _periodicMinMovement = 4.0;
-  static const List<int> _milestones = [100, 50, 20];
 
-  final GetRouteUseCase _getRoute;
+  /// Throttle compass-driven re-evaluations (speech is further gated by the
+  /// engine's own cooldown). Lets orientation corrections fire while the user
+  /// is stationary and only rotating.
+  static const Duration _compassEvalInterval = Duration(milliseconds: 300);
+
+  final GetRouteUseCase _getRouteMapbox;
+  final GetRouteUseCase _getRouteGoogle;
   final CompassService _compass;
   final void Function(String) _onInstruction;
 
-  RouteEntity? _currentRoute;
+  NavProvider _provider;
+
+  // Route + engine.
+  RouteEntity? _currentRoute; // kept for the map polyline / snapshot
+  RoutePath? _routePath;
+  NavEngine? _engine;
   Location? _currentDestination;
-  int _currentStepIndex = 0;
+
   bool _isNavigating = false;
-  bool _isReady = false;
   bool _isRerouting = false;
-  bool _isSpeaking = false;
-
-  StreamSubscription<Position>? _locationSub;
-  StreamSubscription<double?>? _compassSub;
-  Timer? _readyTimer;
-  Timer? _periodicTimer;
-
-  Position? _currentPosition;
-  double? _compassHeading;
-  double? _gpsHeading;
-
-  final Set<int> _milestonesAnnounced = <int>{};
-  DateTime _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
-  String _lastEmitText = '';
-  DateTime _lastAlignmentEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
-  Position? _lastPeriodicPosition;
   int _consecutiveOffRouteFixes = 0;
 
+  // Sensors.
+  StreamSubscription<Position>? _locationSub;
+  StreamSubscription<double?>? _compassSub;
+  Position? _currentPosition;
+
+  final HeadingFilter _headingFilter = HeadingFilter();
+  HeadingEstimate _heading = HeadingEstimate.empty;
+  DateTime _lastCompassEval = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Snapshot.
+  double? _distanceToDestination;
+  String? _lastInstruction;
+  final StreamController<NavigationSnapshot> _snapshotController =
+      StreamController<NavigationSnapshot>.broadcast();
+  NavigationSnapshot _snapshot = NavigationSnapshot.idle;
+
   NavigationService({
-    required GetRouteUseCase getRoute,
+    required GetRouteUseCase getRouteMapbox,
+    required GetRouteUseCase getRouteGoogle,
     required CompassService compass,
     required void Function(String) onInstruction,
-  }) : _getRoute = getRoute,
-       _compass = compass,
-       _onInstruction = onInstruction;
+    NavProvider initialProvider = NavProvider.mapbox,
+  })  : _getRouteMapbox = getRouteMapbox,
+        _getRouteGoogle = getRouteGoogle,
+        _compass = compass,
+        _onInstruction = onInstruction,
+        _provider = initialProvider;
+
+  GetRouteUseCase _getRouteFor(NavProvider p) =>
+      p == NavProvider.google ? _getRouteGoogle : _getRouteMapbox;
+
+  // --- Public API -----------------------------------------------------------
 
   bool get isNavigating => _isNavigating;
   bool get hasRoute => _currentRoute != null;
 
-  double? get _currentHeading => _compassHeading ?? _gpsHeading;
+  /// Active route provider (Mapbox or Google).
+  NavProvider get provider => _provider;
+
+  Stream<NavigationSnapshot> get snapshots => _snapshotController.stream;
+  NavigationSnapshot get currentSnapshot => _snapshot;
 
   Future<String> buildRoute(Location destination) async {
     final position = await _getCurrentLocation();
 
-    final route = await _getRoute(
+    final route = await _getRouteFor(_provider)(
       sourceLat: position.latitude,
       sourceLng: position.longitude,
       destLat: destination.latitude,
@@ -74,110 +105,127 @@ class NavigationService {
 
     if (_isNavigating) {
       _stopSensors();
-      _readyTimer?.cancel();
-      _periodicTimer?.cancel();
     }
 
-    final cleanedInstructions = route.instructions.map((step) {
-      return step.Edit(instruction: _normalizeInstruction(step.instruction));
-    }).toList();
-
-    _currentRoute = route.Edit(instructions: cleanedInstructions);
+    _currentRoute = route;
+    _routePath = _buildRoutePath(route);
+    _engine = null;
     _currentDestination = destination;
-    _currentStepIndex = 0;
     _isNavigating = false;
-    _isReady = false;
-    _milestonesAnnounced.clear();
+    _isRerouting = false;
     _consecutiveOffRouteFixes = 0;
-    _lastPeriodicPosition = null;
+    _currentPosition = position;
+    _distanceToDestination = _routePath?.totalLength;
+    _lastInstruction = null;
+    _publishSnapshot();
 
-    final totalMeters = _routeTotalDistance().toInt();
+    final totalMeters = (_routePath?.totalLength ?? 0).round();
     return 'Route to ${destination.name} is ready. '
         'Total walking distance is about $totalMeters meters. '
         'Say start navigation to begin.';
   }
 
   String startNavigation() {
-    if (_currentRoute == null) {
+    if (_currentRoute == null || _routePath == null) {
       return 'Please specify a destination first by saying navigate to.';
     }
     if (_isNavigating) {
       return 'Navigation is already in progress.';
     }
+    if (_routePath!.vertices.length < 2) {
+      return 'You are already at your destination.';
+    }
 
     _isNavigating = true;
-    _isReady = false;
-    _currentStepIndex = 0;
-    _milestonesAnnounced.clear();
+    _isRerouting = false;
     _consecutiveOffRouteFixes = 0;
-    _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
-    _lastAlignmentEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
-    _lastEmitText = '';
-    _lastPeriodicPosition = null;
+    _lastInstruction = null;
+    _headingFilter.reset();
+    _heading = HeadingEstimate.empty;
+    _engine = NavEngine(_routePath!);
 
     _startSensors();
-    _readyTimer?.cancel();
-    _readyTimer = Timer(_readyDelay, _onReady);
-    _startPeriodicTimer();
+    _publishSnapshot();
 
-    return 'Navigation started. I will guide you continuously '
-        'and announce upcoming turns in advance.';
+    return 'Navigation started. I will guide you as you walk '
+        'and announce each turn when you reach it.';
   }
 
   String stopNavigation() {
     final wasNavigating = _isNavigating;
     _isNavigating = false;
-    _isReady = false;
     _isRerouting = false;
     _stopSensors();
-    _readyTimer?.cancel();
-    _readyTimer = null;
-    _periodicTimer?.cancel();
-    _periodicTimer = null;
+    _engine = null;
+    _routePath = null;
     _currentRoute = null;
     _currentDestination = null;
-    _currentStepIndex = 0;
-    _milestonesAnnounced.clear();
     _consecutiveOffRouteFixes = 0;
-    _lastPeriodicPosition = null;
+    _distanceToDestination = null;
+    _snapshot = NavigationSnapshot.idle;
+    _publishSnapshot();
 
     return wasNavigating ? 'Navigation stopped.' : 'Navigation is not active.';
   }
 
   void dispose() {
     _stopSensors();
-    _readyTimer?.cancel();
-    _periodicTimer?.cancel();
+    _snapshotController.close();
   }
 
-  String _normalizeInstruction(String text) {
-    final lower = text.toLowerCase();
+  /// Switches the directions provider. If a destination is active, the route is
+  /// re-fetched from the current position via the new provider (and, while
+  /// navigating, the engine is rebuilt so guidance continues seamlessly). The
+  /// post-processing/orientation behaviour is identical for both providers.
+  /// Returns null on success, or an error message.
+  Future<String?> setProvider(NavProvider next) async {
+    if (next == _provider) return null;
+    _provider = next;
 
-    return lower
-        .replaceAll('bear left', 'follow the road curving left')
-        .replaceAll('bear right', 'follow the road curving right')
-        .replaceAll('slight left', 'slight left')
-        .replaceAll('slight right', 'slight right')
-        .replaceAll('turn left', 'turn left')
-        .replaceAll('turn right', 'turn right')
-        .replaceAll('continue', 'continue straight');
+    final dest = _currentDestination;
+    final pos = _currentPosition;
+    if (dest == null || pos == null) {
+      // No active route: the new provider applies to the next "navigate to".
+      _publishSnapshot();
+      return null;
+    }
+
+    try {
+      final route = await _getRouteFor(_provider)(
+        sourceLat: pos.latitude,
+        sourceLng: pos.longitude,
+        destLat: dest.latitude,
+        destLng: dest.longitude,
+      );
+      _currentRoute = route;
+      _routePath = _buildRoutePath(route);
+      _consecutiveOffRouteFixes = 0;
+      if (_isNavigating) {
+        _engine = _routePath == null ? null : NavEngine(_routePath!);
+      }
+      _distanceToDestination = _routePath?.totalLength;
+      _publishSnapshot();
+      return null;
+    } catch (_) {
+      return 'Failed to switch route provider.';
+    }
   }
+
+  // --- Sensors --------------------------------------------------------------
 
   void _startSensors() {
     _locationSub?.cancel();
     _locationSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
+        accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 2,
       ),
     ).listen(_onLocationUpdate);
 
     _compassSub?.cancel();
-    _compassSub = _compass.headingStream.listen((h) {
-      _compassHeading = h;
-    });
+    _compassSub = _compass.headingStream.listen(_onCompass);
     final cached = _compass.currentHeading;
-    if (cached != null) _compassHeading = cached;
+    if (cached != null) _heading = _headingFilter.add(cached);
   }
 
   void _stopSensors() {
@@ -185,323 +233,167 @@ class NavigationService {
     _locationSub = null;
     _compassSub?.cancel();
     _compassSub = null;
-    _compassHeading = null;
-    _gpsHeading = null;
-  }
-
-  void _onReady() {
-    _isReady = true;
-    _giveFirstGuidance();
-  }
-
-  void _giveFirstGuidance() {
-    if (!_isNavigating || _currentRoute == null) return;
-
-    if (_currentPosition == null) {
-      _emit('Waiting for GPS signal. Please wait a few seconds.', urgent: true);
-      return;
-    }
-
-    final steps = _currentRoute!.instructions;
-    if (steps.length < 2) {
-      _emit('You are already at your destination.', urgent: true);
-      stopNavigation();
-      return;
-    }
-
-    final next = steps[1];
-    final dist = _haversineToPoint(_currentPosition!, next.lat, next.lng);
-
-    final heading = _currentHeading;
-    if (heading == null) {
-      _emit(
-        'Begin walking forward. About ${dist.toInt()} meters to the first '
-        'turn. I will correct your direction once I detect your orientation.',
-        urgent: true,
-      );
-      return;
-    }
-
-    final required = bearingBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      next.lat,
-      next.lng,
-    );
-    final delta = angleDelta(heading, required);
-    final phrase = initialDirectionPhrase(delta);
-    _emit(
-      '$phrase. About ${dist.toInt()} meters to the first turn.',
-      urgent: true,
-    );
-  }
-
-  void _startPeriodicTimer() {
-    _periodicTimer?.cancel();
-    _periodicTimer = Timer.periodic(_periodicInterval, (_) {
-      _periodicGuidance();
-    });
+    _headingFilter.reset();
+    _heading = HeadingEstimate.empty;
   }
 
   void _onLocationUpdate(Position position) {
     _currentPosition = position;
-
-    if (position.heading >= 0 && position.speed > 0.3) {
-      _gpsHeading = position.heading;
-    }
-
-    if (!_isNavigating || _currentRoute == null || !_isReady || _isRerouting) {
+    if (!_isNavigating || _engine == null || _isRerouting) {
+      _publishSnapshot();
       return;
     }
-
-    if (_isOffRoute(position)) {
-      _consecutiveOffRouteFixes++;
-      if (_consecutiveOffRouteFixes >= _offRouteFixesRequired) {
-        _consecutiveOffRouteFixes = 0;
-        _reroute(position);
-      }
-      return;
-    } else {
-      _consecutiveOffRouteFixes = 0;
-    }
-
-    final steps = _currentRoute!.instructions;
-
-    if (_currentStepIndex >= steps.length - 1) {
-      final destDist = _distanceToDestination();
-      if (destDist != null && destDist < _arrivalThreshold) {
-        _emit('You have arrived at your destination.', urgent: true);
-        stopNavigation();
-      }
-      return;
-    }
-
-    final next = steps[_currentStepIndex + 1];
-    final distToNext = _haversineToPoint(position, next.lat, next.lng);
-
-    if (distToNext < _maneuverProximity) {
-      final phrase = _maneuverPhrase(next);
-      _emit('$phrase now.', urgent: true);
-      _currentStepIndex++;
-      _milestonesAnnounced.clear();
-      return;
-    }
-
-    for (final ms in _milestones) {
-      if (!_milestonesAnnounced.contains(ms) && distToNext <= ms.toDouble()) {
-        final phrase = _maneuverPhrase(next);
-        _emit('In $ms meters, $phrase.');
-        _milestonesAnnounced.add(ms);
-        break;
-      }
-    }
+    _evaluate(GeoPoint(position.latitude, position.longitude), DateTime.now());
   }
 
-  void _periodicGuidance() {
-    if (!_isNavigating ||
-        !_isReady ||
-        _currentPosition == null ||
-        _currentRoute == null ||
-        _isRerouting) {
-      return;
-    }
+  void _onCompass(double? raw) {
+    if (raw == null) return;
+    _heading = _headingFilter.add(raw);
 
-    if (DateTime.now().difference(_lastEmitAt) < const Duration(seconds: 6)) {
-      return;
-    }
-
-    final correction = _checkAlignment();
-    if (correction != null) {
-      _emitAlignmentCorrection(correction);
-      return;
-    }
-
-    if (_lastPeriodicPosition != null) {
-      final moved = Geolocator.distanceBetween(
-        _lastPeriodicPosition!.latitude,
-        _lastPeriodicPosition!.longitude,
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-      );
-      if (moved < _periodicMinMovement) return;
-    }
-    _lastPeriodicPosition = _currentPosition;
-
-    final steps = _currentRoute!.instructions;
-    if (_currentStepIndex >= steps.length - 1) {
-      final destDist = _distanceToDestination();
-      if (destDist == null) return;
-      _emit('Continue straight. ${destDist.toInt()} meters to destination.');
-      return;
-    }
-
-    final next = steps[_currentStepIndex + 1];
-    final dist = _haversineToPoint(_currentPosition!, next.lat, next.lng);
-    _emit('Continue walking. ${dist.toInt()} meters to next turn.');
-  }
-
-  String? _checkAlignment() {
-    final heading = _currentHeading;
-    if (heading == null || _currentPosition == null || _currentRoute == null) {
-      return null;
-    }
-    final required = _requiredHeading();
-    if (required == null) return null;
-    final delta = angleDelta(heading, required);
-    return describeAlignmentCorrection(delta);
-  }
-
-  void _emitAlignmentCorrection(String phrase) {
     final now = DateTime.now();
-    if (now.difference(_lastAlignmentEmitAt) < _alignmentCooldown) return;
-    _lastAlignmentEmitAt = now;
-    _emit('${capitalizeFirst(phrase)}.', urgent: true);
-  }
-
-  String _maneuverPhrase(TurnByTurnStep next) {
-    final heading = _currentHeading;
-    if (heading != null && next.bearingAfter != null) {
-      final delta = angleDelta(heading, next.bearingAfter!);
-      return describeTurn(delta);
-    }
-    return modifierToPhrase(next.modifier, fallbackType: next.maneuverType);
-  }
-
-  double? _requiredHeading() {
-    if (_currentPosition == null || _currentRoute == null) return null;
-    final steps = _currentRoute!.instructions;
-
-    if (_currentStepIndex >= steps.length - 1) {
-      final dest = _currentDestination;
-      if (dest == null) return null;
-      return bearingBetween(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-        dest.latitude,
-        dest.longitude,
+    if (_isNavigating &&
+        _engine != null &&
+        _currentPosition != null &&
+        !_isRerouting &&
+        now.difference(_lastCompassEval) >= _compassEvalInterval) {
+      _lastCompassEval = now;
+      _evaluate(
+        GeoPoint(_currentPosition!.latitude, _currentPosition!.longitude),
+        now,
       );
+    } else {
+      _publishSnapshot();
+    }
+  }
+
+  // --- Core evaluation ------------------------------------------------------
+
+  void _evaluate(GeoPoint geo, DateTime now) {
+    final engine = _engine;
+    final path = _routePath;
+    if (engine == null || path == null) return;
+
+    // Off-route detection (cross-track from the route polyline).
+    final proj = path.project(geo);
+    if (proj.crossTrackDistance > _offRouteThreshold) {
+      _consecutiveOffRouteFixes++;
+      if (_consecutiveOffRouteFixes >= _offRouteFixesRequired && !_isRerouting) {
+        _consecutiveOffRouteFixes = 0;
+        _reroute();
+      }
+      return;
+    }
+    _consecutiveOffRouteFixes = 0;
+
+    final update = engine.update(
+      position: geo,
+      heading: _heading.smoothedHeading,
+      headingStable: _heading.isStable,
+      now: now,
+    );
+
+    final remaining = path.totalLength - update.projection.distanceAlong;
+    _distanceToDestination = remaining < 0 ? 0 : remaining;
+
+    final inst = update.instruction;
+    if (inst != null) {
+      _speak(inst.text);
     }
 
-    final next = steps[_currentStepIndex + 1];
-    return bearingBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      next.lat,
-      next.lng,
-    );
-  }
-
-  double _haversineToPoint(Position position, double lat, double lng) {
-    return Geolocator.distanceBetween(
-      position.latitude,
-      position.longitude,
-      lat,
-      lng,
-    );
-  }
-
-  double? _distanceToDestination() {
-    if (_currentPosition == null || _currentDestination == null) return null;
-    return Geolocator.distanceBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      _currentDestination!.latitude,
-      _currentDestination!.longitude,
-    );
-  }
-
-  double _routeTotalDistance() {
-    if (_currentRoute == null) return 0;
-    double total = 0;
-    for (final step in _currentRoute!.instructions) {
-      total += step.distance;
+    if (update.arrived) {
+      stopNavigation();
+      return;
     }
-    return total;
+    _publishSnapshot();
   }
 
-  bool _isOffRoute(Position position) {
-    if (_currentRoute == null || _currentRoute!.coordinates.isEmpty) {
-      return false;
-    }
-    final dist = distancePointToPolylineMeters(
-      position.latitude,
-      position.longitude,
-      _currentRoute!.coordinates,
-    );
-    return dist > _offRouteThreshold;
-  }
-
-  Future<void> _reroute(Position position) async {
-    if (_currentDestination == null || _isRerouting) return;
+  Future<void> _reroute() async {
+    final dest = _currentDestination;
+    final pos = _currentPosition;
+    if (dest == null || pos == null || _isRerouting) return;
     _isRerouting = true;
-
-    _emit('You are off the route. Recalculating.', urgent: true);
+    _speak('You are off the route. Recalculating.');
 
     try {
-      final newRoute = await _getRoute(
-        sourceLat: position.latitude,
-        sourceLng: position.longitude,
-        destLat: _currentDestination!.latitude,
-        destLng: _currentDestination!.longitude,
+      final newRoute = await _getRouteFor(_provider)(
+        sourceLat: pos.latitude,
+        sourceLng: pos.longitude,
+        destLat: dest.latitude,
+        destLng: dest.longitude,
       );
       _currentRoute = newRoute;
-      _currentStepIndex = 0;
-      _milestonesAnnounced.clear();
-      _lastPeriodicPosition = null;
-
-      Timer(const Duration(seconds: 1), _giveFirstGuidance);
+      _routePath = _buildRoutePath(newRoute);
+      _engine = _routePath == null ? null : NavEngine(_routePath!);
+      _consecutiveOffRouteFixes = 0;
+      _publishSnapshot();
     } catch (_) {
-      _emit('Failed to recalculate route. Please try again.', urgent: true);
+      _speak('Failed to recalculate route. Please try again.');
     } finally {
       _isRerouting = false;
     }
   }
 
+  // --- Helpers --------------------------------------------------------------
+
+  RoutePath? _buildRoutePath(RouteEntity route) {
+    final coords = route.coordinates;
+    if (coords.length < 2) return null;
+    final polyline = <GeoPoint>[
+      for (final c in coords)
+        if (c.length >= 2) GeoPoint(c[0], c[1]),
+    ];
+    if (polyline.length < 2) return null;
+    final nodes = <GeoPoint>[
+      for (final s in route.instructions) GeoPoint(s.lat, s.lng),
+    ];
+    return RoutePath.build(polyline: polyline, maneuverNodes: nodes);
+  }
+
+  /// Forwards an instruction to TTS + the snapshot. The engine already applies
+  /// cooldown and de-duplication, so this does not re-gate.
+  void _speak(String text) {
+    _lastInstruction = text;
+    _publishSnapshot();
+    _onInstruction(text);
+  }
+
+  void _publishSnapshot() {
+    _snapshot = NavigationSnapshot(
+      isNavigating: _isNavigating,
+      route: _currentRoute,
+      userLat: _currentPosition?.latitude,
+      userLng: _currentPosition?.longitude,
+      heading: _heading.smoothedHeading,
+      destinationLat: _currentDestination?.latitude,
+      destinationLng: _currentDestination?.longitude,
+      destinationName: _currentDestination?.name,
+      distanceToDestination: _distanceToDestination,
+      lastInstruction: _lastInstruction,
+    );
+    if (!_snapshotController.isClosed) {
+      _snapshotController.add(_snapshot);
+    }
+  }
+
   Future<Position> _getCurrentLocation() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
       throw Exception('Location services disabled');
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
-
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-
     if (permission == LocationPermission.deniedForever) {
       await Geolocator.openAppSettings();
       throw Exception('Permission permanently denied');
     }
-
     if (permission == LocationPermission.denied) {
       throw Exception('Location permission is required');
     }
 
     return Geolocator.getCurrentPosition();
-  }
-
-  void _emit(String text, {bool urgent = false}) {
-    final now = DateTime.now();
-
-    if (_isSpeaking && !urgent) return;
-
-    if (!urgent && now.difference(_lastEmitAt) < _minBetweenAnnouncements) {
-      return;
-    }
-    if (text == _lastEmitText &&
-        now.difference(_lastEmitAt) < const Duration(seconds: 4)) {
-      return;
-    }
-
-    _lastEmitAt = now;
-    _lastEmitText = text;
-    _onInstruction(text);
-
-    Future.delayed(const Duration(seconds: 2), () {
-      _isSpeaking = false;
-    });
   }
 }

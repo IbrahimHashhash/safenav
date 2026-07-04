@@ -1,33 +1,33 @@
-// The ENTIRE spoken vocabulary for the blind-navigation engine lives here.
-//
-// Allowed instructions ONLY:
-//   a) "continue straight ahead" — includes distance in metres (final leg is
-//      phrased toward the destination).
-//   b) "turn left" / "turn right" — no distance, spoken at the turn point.
-//   c) orientation corrections — "turn left/right/around to face the path".
-//   d) arrival.
-//
-// Deliberately NO "slight"/"sharp" turns and NO distance-based pre-announce.
-// Ported from the Google-nav engine.
+
+
+
+
+
+
+
+
+
+
+
 
 import 'route_path.dart' show TurnDirection;
 
 enum NavInstructionKind { continueStraight, turn, orientation, arrival }
 
-/// A single spoken instruction emitted by the engine.
+
 class NavInstruction {
   final NavInstructionKind kind;
   final String text;
 
-  /// Critical instructions (turns, arrival) bypass the speech cooldown.
+  
   final bool isCritical;
 
-  /// Remaining distance (meters) this instruction refers to, when meaningful —
-  /// set for "continue straight" so the engine can decide whether the distance
-  /// changed enough to re-announce. Null for turns, orientation and arrival.
-  ///
-  /// Deliberately NOT part of equality/hashCode: the [text] already encodes the
-  /// rounded distance, so equality stays "same kind + same spoken text".
+  
+  
+  
+  
+  
+  
   final double? distanceMeters;
 
   const NavInstruction._(
@@ -49,7 +49,7 @@ class NavInstruction {
   String toString() => text;
 }
 
-/// Builds the (small, fixed) set of allowed instructions.
+
 class NavPhrasing {
   NavPhrasing._();
 
@@ -104,5 +104,5 @@ class NavPhrasing {
   }
 }
 
-/// Which way the user must rotate to face the route again.
+
 enum FacingCorrection { turnLeft, turnRight, turnAround }

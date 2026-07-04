@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// A labelled caption box. The captions are informational only (they're also
-/// spoken aloud), so long text is capped to [maxLines] and ellipsized rather
-/// than shown in a scroll view — the cards are non-interactive, so a scrollbar
-/// would be unusable anyway.
+
+
+
+
 class CaptionCard extends StatelessWidget {
   const CaptionCard({
     super.key,
@@ -31,8 +31,8 @@ class CaptionCard extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          // Tinted with the dark theme background and kept mostly transparent
-          // so the cards blend in instead of popping over the screen.
+          
+          
           color: const Color(0xFF121212).withValues(alpha: 0.30),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.white.withValues(alpha: 0.06)),

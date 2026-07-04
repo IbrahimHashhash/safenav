@@ -9,10 +9,10 @@ class TurnByTurnStep {
   final double lat;
   final double lng;
 
-  /// Index of the route polyline vertex this maneuver sits on. Assigned after
-  /// the route is parsed (see route repository). Used for robust, segment-based
-  /// progression that does not depend on the GPS hitting the exact maneuver
-  /// point. -1 until resolved.
+  
+  
+  
+  
   int polylineIndex;
 
   TurnByTurnStep({

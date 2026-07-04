@@ -10,8 +10,8 @@ import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import 'developer_screen.dart';
 import 'user_screen.dart';
 
-/// Root screen. Hosts the shared streaming state and a toggle between the
-/// user-facing voice screen and the developer/debug screen.
+
+
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key, required this.obstacleListener});
 
@@ -32,16 +32,16 @@ class _HomeShellState extends State<HomeShell> {
     super.initState();
     final voice = context.read<VoiceAssistantCubit>();
     voice.initialize();
-    // Greet the user on launch with the short how-to so they know how to
-    // interact (tap to talk, available commands).
+    
+    
     voice.playWelcome();
     _streaming = widget.obstacleListener.isStreaming;
-    // Keep the button in sync when detection is toggled by VOICE or stopped by
-    // a network drop.
+    
+    
     _streamingSub = widget.obstacleListener.streamingChanges.listen((on) {
       if (mounted) setState(() => _streaming = on);
     });
-    // User screen does not need preview images.
+    
     widget.obstacleListener.setPreviewsEnabled(false);
   }
 
@@ -53,7 +53,7 @@ class _HomeShellState extends State<HomeShell> {
 
   void _toggleScreen() {
     setState(() => _devMode = !_devMode);
-    // Only fetch model previews from the server while the dev screen is shown.
+    
     widget.obstacleListener.setPreviewsEnabled(_devMode);
   }
 

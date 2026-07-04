@@ -9,7 +9,7 @@ class Location {
   const Location(this.name, this.category, this.latitude, this.longitude);
 
   static const all = [
-    // Faculties
+    
     Location('faculty of engineering and information technology', LocationCategory.faculty, 31.96151396778399, 35.18432534944214),
     Location('faculty of engineering', LocationCategory.faculty, 31.959362, 35.181017),
     Location('faculty of science', LocationCategory.faculty, 31.958576, 35.181223),
@@ -26,7 +26,7 @@ class Location {
     Location('building for development studies', LocationCategory.faculty, 31.961146, 35.183536),
     Location('Al sadik', LocationCategory.faculty, 31.960226, 35.183019),
 
-    // Libraries
+    
     Location('kamal nasir library', LocationCategory.library, 31.958983, 35.181994),
   
     

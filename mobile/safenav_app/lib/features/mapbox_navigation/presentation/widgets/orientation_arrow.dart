@@ -2,10 +2,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// A Google-Maps-style location puck with a heading cone/arrow.
-///
-/// [headingDegrees] is the smoothed compass heading (0 = north, clockwise).
-/// When null, only the dot is shown (orientation not yet known).
+
+
+
+
 class OrientationArrow extends StatelessWidget {
   const OrientationArrow({
     super.key,
@@ -37,7 +37,7 @@ class OrientationArrow extends StatelessWidget {
                 painter: _HeadingConePainter(color: color),
               ),
             ),
-          // Accuracy halo.
+          
           Container(
             width: size * 0.42,
             height: size * 0.42,
@@ -46,7 +46,7 @@ class OrientationArrow extends StatelessWidget {
               color: color.withValues(alpha: 0.18),
             ),
           ),
-          // Solid puck.
+          
           Container(
             width: size * 0.3,
             height: size * 0.3,
@@ -79,8 +79,8 @@ class _HeadingConePainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
 
-    // Cone pointing "up" (north before rotation is applied by the caller).
-    final coneWidth = 0.5; // radians, half-angle ~14°
+    
+    final coneWidth = 0.5; 
     final rect = Rect.fromCircle(center: center, radius: radius);
     final start = -math.pi / 2 - coneWidth;
     final sweep = coneWidth * 2;

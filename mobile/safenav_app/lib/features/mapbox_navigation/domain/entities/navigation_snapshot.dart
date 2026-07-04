@@ -1,8 +1,8 @@
 import 'route_entity.dart';
 
-/// Immutable snapshot of the live navigation state, published to the UI layer
-/// (map view) on every meaningful update. Keeps the presentation layer fully
-/// decoupled from the navigation engine internals.
+
+
+
 class NavigationSnapshot {
   const NavigationSnapshot({
     required this.isNavigating,
@@ -20,11 +20,11 @@ class NavigationSnapshot {
   final bool isNavigating;
   final RouteEntity? route;
 
-  /// Current user location.
+  
   final double? userLat;
   final double? userLng;
 
-  /// Smoothed, stable heading in degrees (0..360), used to rotate the arrow.
+  
   final double? heading;
 
   final double? destinationLat;

@@ -6,12 +6,12 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'camera_frame_source.dart';
 
-/// [CameraFrameSource] backed by the `camera` plugin.
-///
-/// Frames are captured with [CameraController.takePicture], which produces a
-/// real camera JPEG that carries its EXIF orientation tag. This is required by
-/// the detection server: image-stream frames re-encoded by hand have no EXIF
-/// and get rotated 90° server-side, producing garbage detections.
+
+
+
+
+
+
 class CameraFrameSourceImpl implements CameraFrameSource {
   CameraController? _controller;
   bool _initializing = false;
@@ -56,8 +56,8 @@ class CameraFrameSourceImpl implements CameraFrameSource {
 
       final controller = CameraController(
         back,
-        // Medium (~480p) keeps frames small; the server downscales to 512px
-        // for YOLO anyway, so higher resolution only wastes bandwidth.
+        
+        
         ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.jpeg,

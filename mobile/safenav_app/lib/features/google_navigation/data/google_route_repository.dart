@@ -6,12 +6,12 @@ import '../../mapbox_navigation/domain/entities/route_entity.dart';
 import '../../mapbox_navigation/domain/entities/turn_by_turn_step.dart';
 import '../../mapbox_navigation/domain/repositories/route_repository.dart';
 
-/// Alternative route provider that fetches WALKING directions from the Google
-/// Directions API and returns the SAME [RouteEntity] the Mapbox provider does.
-///
-/// This lives in its own feature folder and does not touch the Mapbox code:
-/// the navigation post-processing engine is shared, so swapping providers only
-/// swaps where the route geometry + maneuver points come from.
+
+
+
+
+
+
 class GoogleRouteRepository implements RouteRepository {
   GoogleRouteRepository({required this.apiKey, http.Client? client})
       : _client = client ?? http.Client();
@@ -66,9 +66,9 @@ class GoogleRouteRepository implements RouteRepository {
     final steps = (legs.first as Map<String, dynamic>)['steps'] as List? ??
         const [];
 
-    // Concatenate the per-step polylines for precise geometry, and use each
-    // step's end_location as a candidate maneuver node (the engine anchors it
-    // to the nearest vertex and keeps only geometrically significant turns).
+    
+    
+    
     final coordinates = <List<double>>[];
     final instructions = <TurnByTurnStep>[];
 
@@ -104,7 +104,7 @@ class GoogleRouteRepository implements RouteRepository {
     return RouteEntity(coordinates: coordinates, instructions: instructions);
   }
 
-  /// Decodes a Google encoded polyline into a list of [lat, lng] pairs.
+  
   static List<List<double>> _decodePolyline(String encoded) {
     final points = <List<double>>[];
     int index = 0;

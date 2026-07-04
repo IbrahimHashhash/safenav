@@ -1,27 +1,27 @@
-// Position-relative TTS guidance engine for blind navigation.
-//
-// One instruction is derived per location/heading event from the user's
-// position PROJECTED onto the route polyline:
-//   * Distances are measured ALONG the route, so "continue" stays correct
-//     around curves and decreases as the user advances.
-//   * A single global cooldown (<= 5 s) gates non-critical speech; turns and
-//     arrival are critical and bypass it. Identical consecutive lines are
-//     de-duplicated.
-//   * Robust turn progression: each turn is anchored to a polyline vertex; the
-//     turn fires when the user is within a small REACHABLE window OR has passed
-//     the anchor. Passing a maneuver ALWAYS advances the pointer.
-//   * Path-relative orientation: the direction to face comes from the bearing
-//     of the CURRENT route segment, not the straight-line bearing to the next
-//     node. A deadzone suppresses corrections when essentially aligned.
-//
-// Pure Dart, no Flutter/SDK dependencies. Ported from the Google-nav engine.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import 'geo_math.dart';
 import 'geo_point.dart';
 import 'nav_instruction.dart';
 import 'route_path.dart';
 
-/// Result of feeding one location/heading event to the engine.
+
 class NavUpdate {
   final NavInstruction? instruction;
   final PolylineProjection projection;
@@ -45,20 +45,20 @@ class NavEngineConfig {
   final double orientationDeadzoneDeg;
   final double turnAroundThresholdDeg;
 
-  /// Orientation corrections are suppressed when the user is within this
-  /// distance (m) of the next turn — the maneuver instruction handles the turn,
-  /// and the compass-vs-segment-bearing reading is unreliable at a corner.
+  
+  
+  
   final double orientationApproachMeters;
 
-  /// Orientation corrections are also suppressed for this long AFTER a turn
-  /// fires, while the user is completing the turn (heading still settling).
+  
+  
   final Duration orientationSettle;
 
-  /// "Continue straight ahead" is re-announced only once the remaining distance
-  /// has changed by at least this much (meters). Smaller drifts are not
-  /// repeated, so the user isn't told a slightly different distance every few
-  /// seconds; larger progress (e.g. 20 m -> 10 m) is announced. Turns and
-  /// arrival are unaffected (they are always spoken).
+  
+  
+  
+  
+  
   final double continueDistanceChangeMeters;
 
   const NavEngineConfig({
@@ -90,8 +90,8 @@ class NavEngine {
   int get turnCount => route.turns.length;
   NavInstruction? get lastSpoken => _lastSpoken;
 
-  /// Feeds one event. [heading] is the smoothed compass heading (degrees);
-  /// [headingStable] must be true before orientation corrections are allowed.
+  
+  
   NavUpdate update({
     required GeoPoint position,
     double? heading,
@@ -120,7 +120,7 @@ class NavEngine {
       );
     }
 
-    // 1) Arrival (critical).
+    
     final distToDest = GeoMath.distanceMeters(position, route.destination);
     if (distToDest <= config.arrivalRadiusMeters ||
         remainingToDest <= config.arrivalRadiusMeters) {
@@ -135,7 +135,7 @@ class NavEngine {
       );
     }
 
-    // 2) Turn progression (critical). Fire when reached OR passed.
+    
     if (hasTurnAhead) {
       final reached = remainingToTurn <= config.reachableWindowMeters;
       final passed = userAlong >= activeTurn.distanceAlong;
@@ -153,11 +153,11 @@ class NavEngine {
       }
     }
 
-    // 3) Orientation correction (non-critical), only on a stable heading.
-    //    Suppressed near a turn and just after one: there the maneuver handles
-    //    guidance and the compass-vs-segment-bearing reading flips at the
-    //    corner, which would otherwise contradict the turn ("turn left" + an
-    //    opposite "turn right to face the path").
+    
+    
+    
+    
+    
     final nearTurn =
         hasTurnAhead && remainingToTurn <= config.orientationApproachMeters;
     final settling = _lastTurnAt != null &&
@@ -185,7 +185,7 @@ class NavEngine {
       }
     }
 
-    // 4) Continue straight ahead (non-critical), distance along the route.
+    
     final isFinalLeg = !hasTurnAhead;
     final inst = _commit(
       NavPhrasing.continueStraight(distanceToNext, isFinalLeg: isFinalLeg),
@@ -211,34 +211,34 @@ class NavEngine {
     return raw < 0 ? 0.0 : raw;
   }
 
-  /// Applies cooldown (non-critical only), de-duplication, and distance-aware
-  /// gating of "continue straight".
+  
+  
   NavInstruction? _commit(NavInstruction inst, DateTime now) {
-    // Turns and arrival are critical: they mark a real maneuver and must NEVER
-    // be suppressed as redundant — e.g. two left turns in a row must both be
-    // spoken, and a turn is never dropped just because distance barely changed.
+    
+    
+    
     if (inst.isCritical) {
       _lastSpoken = inst;
       _lastSpeakTime = now;
       return inst;
     }
 
-    // Exact same non-critical line as the previous one → don't repeat it
-    // back-to-back.
+    
+    
     if (_lastSpoken == inst) {
       return null;
     }
 
-    // Non-critical lines are rate-limited by the cooldown.
+    
     if (_lastSpeakTime != null &&
         now.difference(_lastSpeakTime!) < config.speechCooldown) {
       return null;
     }
 
-    // "Continue straight" repeats only on a MEANINGFUL distance change. Even
-    // after the cooldown, a drift smaller than the threshold is not repeated
-    // (so the user isn't told a slightly different distance every few seconds);
-    // it is re-announced once they have made real progress along the route.
+    
+    
+    
+    
     if (inst.kind == NavInstructionKind.continueStraight &&
         _lastSpoken?.kind == NavInstructionKind.continueStraight) {
       final lastD = _lastSpoken?.distanceMeters;

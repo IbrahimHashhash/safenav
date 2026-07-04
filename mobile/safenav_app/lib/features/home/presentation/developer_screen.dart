@@ -18,10 +18,10 @@ import '../../voice_interaction/presentation/cubit/voice_assistant_state.dart';
 
 enum _ModelPreview { yolo, depth, freeZone }
 
-/// Developer/debug screen: live camera preview, the navigation map with the
-/// current coordinates, a caption of the last spoken instruction (navigation
-/// or obstacle), per-model preview images from the server, the detected
-/// obstacle list, and all server metrics plus client end-to-end latency.
+
+
+
+
 class DeveloperScreen extends StatefulWidget {
   const DeveloperScreen({
     super.key,
@@ -54,8 +54,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   NavProvider _navProvider = NavProvider.mapbox;
   late final WalkingSpeedTracker _speed;
 
-  // Last successfully received preview per model. Kept across skipped frames
-  // (a skipped frame carries no previews) so the image never blanks out.
+  
+  
   Uint8List? _lastYolo;
   Uint8List? _lastDepth;
 
@@ -303,7 +303,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Layout helpers -------------------------------------------------------
+  
 
   Widget _section({
     required IconData icon,
@@ -342,7 +342,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Status strip (frame id, skipped, MAD, latency, fps) ------------------
+  
 
   Widget _statusStrip() {
     final r = _result;
@@ -515,7 +515,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Navigation provider toggle ------------------------------------------
+  
 
   Widget _navProviderToggle() {
     return Row(
@@ -541,7 +541,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Camera preview (half screen, cover-fit) ------------------------------
+  
 
   Widget _cameraPreview(BuildContext context) {
     final height = MediaQuery.of(context).size.height * 0.5;
@@ -577,7 +577,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Model previews -------------------------------------------------------
+  
 
   Widget _previewSelector() {
     return Wrap(
@@ -636,8 +636,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 style: TextStyle(color: Colors.white70),
               ),
             ),
-          // When the current frame was skipped, keep showing the last preview
-          // but make clear it is not live.
+          
+          
           if (skipped && bytes != null)
             Positioned(
               left: 8,
@@ -650,8 +650,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  /// Visualises the server's free-zone analysis as translucent vertical
-  /// regions (green = free, red = blocked) overlaid on the actual frame.
+  
+  
   Widget _freeZoneView() {
     final zones = _result?.freeZones ?? const <FreeZone>[];
     final skipped = _result?.skipped == true;
@@ -683,9 +683,9 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           : LayoutBuilder(
               builder: (context, constraints) {
                 final h = constraints.maxHeight;
-                // Analysis band: regions cover most of the height, leaving the
-                // foreground/ground at the bottom uncovered (as in the server's
-                // reference rendering).
+                
+                
+                
                 final bandTop = h * 0.10;
                 final bandHeight = h * 0.62;
                 return Stack(
@@ -727,8 +727,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  /// Background frame for the free-zone overlay: the clean last frame if
-  /// available, else the YOLO preview, else the live camera, else nothing.
+  
+  
   Widget _freeZoneBackground() {
     final frame = widget.listener.lastFrameJpeg;
     if (frame != null) {
@@ -780,8 +780,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  /// Per-region clearance cards shown below the free-zone band. Green when the
-  /// region is clear/free, red when blocked.
+  
+  
   Widget _clearanceCards() {
     final zones = _result?.freeZones ?? const <FreeZone>[];
     if (zones.isEmpty) return const SizedBox.shrink();
@@ -852,7 +852,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Obstacles ------------------------------------------------------------
+  
 
   Widget _obstacleList() {
     final obstacles = _result?.obstacles ?? const <DetectedObstacle>[];
@@ -901,7 +901,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // --- Metrics --------------------------------------------------------------
+  
 
   Widget _metrics() {
     final r = _result;
@@ -920,7 +920,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     ];
 
     for (final e in r.metrics.scalarEntries) {
-      // Shown separately as the MAD tile/row; don't duplicate it here.
+      
       if (e.key == 'mad' ||
           e.key == 'frame_mad' ||
           e.key == 'frame_signature_mad') {

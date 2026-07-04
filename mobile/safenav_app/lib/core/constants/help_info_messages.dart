@@ -1,6 +1,6 @@
 class HelpInfoMessages {
-  /// Spoken on launch and whenever the user asks for "more info". Kept short
-  /// and conversational so it's easy to follow and remember by ear.
+  
+  
   static const availableCommands =
       'Hello, and welcome. I am your personal navigation assistant. '
       'To talk to me, tap anywhere on the screen and say what you need. '

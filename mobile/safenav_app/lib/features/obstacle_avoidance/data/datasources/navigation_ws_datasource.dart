@@ -6,17 +6,17 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../domain/entities/detection_result.dart';
 
-/// Client for the detection server's `/ws/navigation` WebSocket.
-///
-/// Wire protocol (see server.py):
-///   Client -> server (binary frame):
-///     [0:4]  uint32 BE frame_id
-///     [4]    uint8  flags  (bit 0 = request previews; enables ALL previews)
-///     [5:]   raw JPEG bytes
-///   Server -> client (text): JSON response. We parse the full result.
-///   Server -> client (binary, only if previews were requested): one message
-///     per preview, [0:4] frame_id, [4] flag (0x01 depth, 0x02 seg, 0x04 yolo,
-///     0x08 mask), [5:] image bytes. Correlated back to the JSON via frame_id.
+
+
+
+
+
+
+
+
+
+
+
 class NavigationWebSocketDatasource {
   NavigationWebSocketDatasource({required String baseUrl})
       : _wsUrl = _toWsUrl(baseUrl);
@@ -33,13 +33,13 @@ class NavigationWebSocketDatasource {
   static const int _yoloFlag = 0x04;
   static const int _maskFlag = 0x08;
 
-  /// Results awaiting their preview attachments, keyed by frame_id.
+  
   final Map<int, DetectionResult> _pending = {};
 
-  /// Send timestamps for end-to-end latency, keyed by frame_id.
+  
   final Map<int, DateTime> _sentAt = {};
 
-  /// Rich result stream (one event per fully-assembled frame response).
+  
   Stream<DetectionResult> get stream {
     _controller ??= StreamController<DetectionResult>.broadcast();
     return _controller!.stream;
@@ -47,7 +47,7 @@ class NavigationWebSocketDatasource {
 
   bool get isConnected => _connected;
 
-  /// The resolved WebSocket URL (for diagnostics/messages).
+  
   String get url => _wsUrl;
 
   Future<bool> connect() async {
@@ -74,8 +74,8 @@ class NavigationWebSocketDatasource {
     }
   }
 
-  /// Sends one camera frame. Set [includePreviews] to receive the model
-  /// preview images back (used by the developer screen).
+  
+  
   void sendFrame(
     Uint8List jpeg,
     int frameId, {
@@ -91,7 +91,7 @@ class NavigationWebSocketDatasource {
     packet.setRange(_headerSize, packet.length, jpeg);
 
     _sentAt[frameId] = DateTime.now();
-    // Bound memory if responses are lost.
+    
     if (_sentAt.length > 120) {
       final cutoff = frameId - 60;
       _sentAt.removeWhere((id, _) => id < cutoff);
@@ -119,7 +119,7 @@ class NavigationWebSocketDatasource {
       if (decoded is! Map<String, dynamic>) return;
       json = decoded;
     } catch (_) {
-      return; // malformed / server error text
+      return; 
     }
 
     final result = DetectionResult.fromJson(json);
@@ -130,7 +130,7 @@ class NavigationWebSocketDatasource {
           DateTime.now().difference(sent).inMicroseconds / 1000.0;
     }
 
-    // A new JSON means any older pending frame's previews are not coming.
+    
     _flushOlderThan(result.frameId);
 
     if (result.expectedAttachments == 0) {
@@ -174,7 +174,7 @@ class NavigationWebSocketDatasource {
     }
   }
 
-  /// Emit (and stop waiting for) any pending results older than [frameId].
+  
   void _flushOlderThan(int frameId) {
     if (_pending.isEmpty) return;
     final stale = _pending.keys.where((id) => id < frameId).toList();
@@ -205,28 +205,28 @@ class NavigationWebSocketDatasource {
     _controller = null;
   }
 
-  /// Builds the navigation WebSocket URL from the configured base URL,
-  /// tolerating whatever form `OBSTACLE_API_URL` is given in:
-  ///   `http://host:8000`            -> `ws://host:8000/ws/navigation`
-  ///   `https://host`                -> `wss://host/ws/navigation`
-  ///   `ws://host:8000`              -> `ws://host:8000/ws/navigation`
-  ///   `ws://host:8000/ws/navigation`-> unchanged (path not duplicated)
+  
+  
+  
+  
+  
+  
   static String _toWsUrl(String baseUrl) {
     var url = baseUrl.trim();
 
-    // Normalise scheme to ws/wss (leave ws/wss as-is).
+    
     if (url.startsWith('https://')) {
       url = 'wss://${url.substring('https://'.length)}';
     } else if (url.startsWith('http://')) {
       url = 'ws://${url.substring('http://'.length)}';
     }
 
-    // Drop any trailing slash(es).
+    
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
     }
 
-    // Append the endpoint path only if it is not already there.
+    
     const path = '/ws/navigation';
     if (!url.endsWith(path)) {
       url = '$url$path';

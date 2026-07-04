@@ -3,16 +3,16 @@ import '../../../../core/constants/voice_constants.dart';
 import '../entities/voice_command.dart';
 
 class ParseIntentUseCase {
-  /// The fuzzy fallback only claims a command when the best canonical-phrase
-  /// score reaches this, AND beats the runner-up by [_fuzzyMargin]. Otherwise
-  /// the input is treated as unknown — for a navigation aid it's safer to ask
-  /// the user to repeat than to fire the wrong command on ambiguous speech.
+  
+  
+  
+  
   static const double _fuzzyThreshold = 0.66;
   static const double _fuzzyMargin = 0.08;
 
-  /// Canonical phrasings for the fixed (non-parameterised) commands. Used only
-  /// as a fallback when precise trigger matching finds nothing, to rescue
-  /// slight mishearings (e.g. "stop detension" -> stop detection).
+  
+  
+  
   static const Map<VoiceCommandType, List<String>> _phrases = {
     VoiceCommandType.startDetection: [
       'start detection',
@@ -74,8 +74,8 @@ class ParseIntentUseCase {
       return VoiceCommandType.nextInstruction;
     }
 
-    // Obstacle detection toggle (checked before navigation; its trigger words
-    // — "detection"/"obstacle" — do not overlap the navigate triggers).
+    
+    
     final hasDetection =
         _containsIntent(words, VoiceConstants.detectionTriggers);
     if (hasDetection &&
@@ -109,8 +109,8 @@ class ParseIntentUseCase {
       return VoiceCommandType.listLocations;
     }
 
-    // Change the stored user name: "change my name", "update my name", or the
-    // standalone "rename me".
+    
+    
     final saysRename =
         words.any((w) => TextUtils.isSimilarWord(w, 'rename'));
     if (saysRename ||
@@ -123,14 +123,14 @@ class ParseIntentUseCase {
       return VoiceCommandType.navigate;
     }
 
-    // Greeting is checked late (before the fuzzy fallback) so a phrase like
-    // "hey, navigate to the library" is still treated as a navigation command.
+    
+    
     if (_containsIntent(words, VoiceConstants.greetingTriggers)) {
       return VoiceCommandType.greeting;
     }
 
-    // Nothing matched precisely. Try a confident fuzzy match for fixed commands
-    // that were slightly misheard. Ambiguous/low-confidence input stays unknown.
+    
+    
     final fuzzy = _bestPhraseMatch(normalized);
     if (fuzzy != null) return fuzzy;
 
@@ -142,9 +142,9 @@ class ParseIntentUseCase {
         triggers.any((trigger) => TextUtils.isSimilarWord(word, trigger)));
   }
 
-  /// Returns the closest fixed command only if the match is both strong
-  /// ([_fuzzyThreshold]) and clearly ahead of the next-best command
-  /// ([_fuzzyMargin]); otherwise null (ambiguous → unknown).
+  
+  
+  
   VoiceCommandType? _bestPhraseMatch(String normalized) {
     if (normalized.isEmpty) return null;
 

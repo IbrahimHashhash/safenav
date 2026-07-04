@@ -29,11 +29,11 @@ class VoiceAssistantService {
   bool _isPressActive = false;
   bool _hasHandledCommand = false;
 
-  /// While true, the user is in a conversation with the assistant (from the
-  /// moment listening starts until the assistant's reply finishes speaking).
-  /// Navigation/obstacle guidance is DROPPED during this window so nothing
-  /// interrupts the user or the reply. Guarded by a token so a stale reply
-  /// completion can't end a newer conversation.
+  
+  
+  
+  
+  
   bool _conversationActive = false;
   int _conversationId = 0;
 
@@ -68,11 +68,11 @@ class VoiceAssistantService {
   }
 
   Future<void> initialize() async {
-    // The cue is a short UI blip. Configure its player to NOT participate in
-    // audio focus (mixWithOthers -> AndroidAudioFocus.none). Otherwise, when
-    // the recorder or TTS grabs audio focus, audioplayers receives
-    // AUDIOFOCUS_LOSS and pauses the cue mid-playback — which made the
-    // start/stop cues play only randomly.
+    
+    
+    
+    
+    
     try {
       await _cuePlayer.setAudioContext(
         AudioContextConfig(focus: AudioContextConfigFocus.mixWithOthers).build(),
@@ -81,13 +81,13 @@ class VoiceAssistantService {
     await _sttService.initialize();
   }
 
-  /// Speaks the welcome + how-to message (used on app launch and via "more
-  /// info"). Routed through the assistant speech path so guidance never talks
-  /// over it, and it becomes the "repeat" target until something else is said.
+  
+  
+  
   Future<void> playWelcome() => _speakReply(HelpInfoMessages.availableCommands);
 
-  /// Attaches the obstacle-detection controller so voice commands can toggle
-  /// detection. Wired after the listener is constructed.
+  
+  
   set detectionController(DetectionController controller) {
     _commandHandler.detection = controller;
   }
@@ -102,13 +102,13 @@ class VoiceAssistantService {
     await _enqueueGuidance(SpeechRequest(text, SpeechPriority.navigation));
   }
 
-  /// Guidance (obstacle/navigation) is DROPPED while the user is conversing
-  /// with the assistant, so it never interrupts the command or the reply.
+  
+  
   Future<void> _enqueueGuidance(SpeechRequest request) async {
     if (_conversationActive) return;
-    // Track the most recent line actually spoken (guidance OR assistant reply)
-    // so "repeat" replays whatever the user last heard — navigation, obstacle,
-    // or an assistant response.
+    
+    
+    
     _lastInstruction = request.text;
     await _speechQueue.enqueue(request);
   }
@@ -124,27 +124,27 @@ class VoiceAssistantService {
 
     _isPressActive = true;
     _hasHandledCommand = false;
-    // Open a fresh conversation window and silence any guidance currently
-    // playing so it never talks over the user.
+    
+    
     _conversationId++;
     _conversationActive = true;
-    // Silence ANY speech currently playing (guidance or an assistant reply) so
-    // pushing to talk always interrupts and lets the user speak.
+    
+    
     await _speechQueue.clearAll();
 
     await _playCue();
     if (!_isPressActive) return;
 
-    // Let the activation cue finish before opening the mic, so speaker output
-    // never overlaps microphone capture (overlap can disrupt recording on
-    // Android). The cue is the user's "speak now" signal anyway.
+    
+    
+    
     await Future<void>.delayed(const Duration(milliseconds: 300));
     if (!_isPressActive) return;
 
-    // Pre-roll buffer: start capturing into a buffer NOW, before Azure is
-    // connected, so the first word spoken right after the cue isn't lost during
-    // the ~1s the session takes to come online. Azure receives the buffered
-    // audio first, then live audio, once it connects.
+    
+    
+    
+    
     try {
       await _runStt(() => _sttService.primeMic());
     } catch (e) {
@@ -224,7 +224,7 @@ class VoiceAssistantService {
       return;
     }
 
-    // Surface the recognized transcript so the UI can caption the input.
+    
     onStateChange?.call(VoiceProcessing(trimmed));
 
     if (_parseIntent(trimmed) == VoiceCommandType.repeat) {
@@ -247,8 +247,8 @@ class VoiceAssistantService {
     await _speakReply(request.text);
   }
 
-  /// Speaks the assistant's reply and ends the conversation window once the
-  /// reply has finished (so guidance resumes only after the user is answered).
+  
+  
   Future<void> _speakReply(String text) async {
     _lastInstruction = text;
     final id = _conversationId;

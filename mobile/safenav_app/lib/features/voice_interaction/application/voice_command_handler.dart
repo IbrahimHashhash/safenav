@@ -9,8 +9,8 @@ import '../domain/usecases/extract_location_usecase.dart';
 import '../domain/usecases/parse_intent_usecase.dart';
 import 'speech_queue.dart';
 
-/// Leading phrases stripped when a user states their name, e.g.
-/// "my name is Sara", "I'm John", "call me Alex".
+
+
 const List<String> _namePrefixes = [
   'my name is',
   'my name',
@@ -31,20 +31,20 @@ const Set<String> _nameStopWords = {
   'hi', 'hello', 'hey', 'please', 'thanks', 'thank', 'you', 'yeah', 'yes',
 };
 
-/// Greeting/filler words removed from the START of a phrase before looking for
-/// a name lead-in, so "hello, I am Omar" reduces to "I am Omar" -> "Omar".
+
+
 const Set<String> _leadingFillers = {
   'hi', 'hello', 'hey', 'hiya', 'howdy', 'greetings', 'helo', 'hii',
   'yeah', 'yes', 'ok', 'okay', 'well', 'so', 'um', 'hmm', 'oh',
 };
 
-/// Extracts a person's name from a spoken phrase. Pure (no state), so it is
-/// unit testable. Returns null when nothing name-like remains.
+
+
 String? extractSpokenName(String text) {
-  var t = TextUtils.normalize(text); // lowercased, punctuation removed
+  var t = TextUtils.normalize(text); 
   if (t.isEmpty) return null;
 
-  // Drop leading greeting/filler words ("hello", "ok", ...).
+  
   var tokens = t.split(' ').where((w) => w.isNotEmpty).toList();
   while (tokens.isNotEmpty && _leadingFillers.contains(tokens.first)) {
     tokens.removeAt(0);
@@ -52,7 +52,7 @@ String? extractSpokenName(String text) {
   t = tokens.join(' ');
   if (t.isEmpty) return null;
 
-  // Strip a name lead-in phrase ("my name is", "i am", "call me", ...).
+  
   for (final prefix in _namePrefixes) {
     if (t == prefix) return null;
     if (t.startsWith('$prefix ')) {
@@ -67,7 +67,7 @@ String? extractSpokenName(String text) {
       .toList();
   if (words.isEmpty) return null;
 
-  // Take up to the first two tokens as the name.
+  
   return words.take(2).map(_capitalize).join(' ');
 }
 
@@ -80,8 +80,8 @@ class VoiceCommandHandler {
   final NavigationService navigationService;
   final UserProfileService userProfile;
 
-  /// Controls obstacle detection (set after construction by the app wiring,
-  /// because the listener is created later with the voice cubit).
+  
+  
   DetectionController? detection;
 
   VoiceCommandHandler({
@@ -91,8 +91,8 @@ class VoiceCommandHandler {
     required this.userProfile,
   });
 
-  /// Whether the assistant just asked for the user's name and is waiting for
-  /// the reply.
+  
+  
   bool _awaitingName = false;
 
   static const Set<VoiceCommandType> _actionableIntents = {
@@ -111,8 +111,8 @@ class VoiceCommandHandler {
   Future<SpeechRequest> handle(String text) async {
     final intent = parseIntent(text);
 
-    // If we asked for the name, treat the reply as the name — unless the user
-    // clearly issued a real command instead, which cancels the name capture.
+    
+    
     if (_awaitingName && !_actionableIntents.contains(intent)) {
       return _captureName(text);
     }

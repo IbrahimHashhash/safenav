@@ -1,8 +1,8 @@
-// Pure value type for a geographic coordinate.
-//
-// Lives in the domain layer and intentionally does NOT depend on any
-// Flutter/SDK type, so the navigation logic stays unit-testable without a
-// Flutter binding. Ported from the Google-nav reference engine.
+
+
+
+
+
 
 class GeoPoint {
   final double latitude;

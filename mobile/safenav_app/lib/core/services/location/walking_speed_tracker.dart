@@ -3,15 +3,15 @@ import 'dart:math' as math;
 
 import 'package:geolocator/geolocator.dart';
 
-/// A single walking-speed reading.
+
 class WalkingSpeedSample {
-  /// Instantaneous speed (m/s); 0 while stopped.
+  
   final double currentMps;
 
-  /// Average speed over the time the user was actually walking (m/s).
+  
   final double averageMps;
 
-  /// Whether the user is currently moving.
+  
   final bool moving;
 
   const WalkingSpeedSample({
@@ -27,17 +27,17 @@ class WalkingSpeedSample {
   double get averageKmh => averageMps * 3.6;
 }
 
-/// Tracks the user's walking speed from GPS fixes and keeps a running AVERAGE
-/// over moving time (stationary periods are excluded). When the user stops, the
-/// last accumulated average remains available.
-///
-/// The speed math ([addSample]) is pure and unit-testable; [start] just wires
-/// it to the Geolocator position stream.
+
+
+
+
+
+
 class WalkingSpeedTracker {
-  /// Below this speed (m/s) the user is considered stopped.
+  
   static const double _movingThresholdMps = 0.3;
 
-  /// Reject implausibly large jumps (GPS spikes) from the average.
+  
   static const double _maxPlausibleMps = 8.0;
 
   final StreamController<WalkingSpeedSample> _controller =
@@ -53,8 +53,8 @@ class WalkingSpeedTracker {
   double? _prevLat;
   double? _prevLng;
   DateTime? _prevTime;
-  double _movingDistance = 0; // metres accumulated while moving
-  double _movingSeconds = 0; // seconds accumulated while moving
+  double _movingDistance = 0; 
+  double _movingSeconds = 0; 
 
   Future<bool> start() async {
     if (_sub != null) return true;
@@ -68,7 +68,7 @@ class WalkingSpeedTracker {
       return false;
     }
 
-    // Don't bridge the gap across a pause.
+    
     _prevLat = null;
     _prevLng = null;
     _prevTime = null;
@@ -94,7 +94,7 @@ class WalkingSpeedTracker {
     _sub = null;
   }
 
-  /// Clears the recorded average (e.g. to start a fresh measurement).
+  
   void reset() {
     _movingDistance = 0;
     _movingSeconds = 0;
@@ -104,7 +104,7 @@ class WalkingSpeedTracker {
     _emit(WalkingSpeedSample.zero);
   }
 
-  /// Feeds one fix and returns the updated sample. Pure (no platform calls).
+  
   WalkingSpeedSample addSample({
     required double lat,
     required double lng,
@@ -123,7 +123,7 @@ class WalkingSpeedTracker {
       if (dt > 0) {
         final dist = _haversineMeters(prevLat, prevLng, lat, lng);
         if (!useGps) inst = dist / dt;
-        // Accumulate only genuine, plausible movement into the average.
+        
         if (inst > _movingThresholdMps && inst < _maxPlausibleMps) {
           _movingDistance += dist;
           _movingSeconds += dt;

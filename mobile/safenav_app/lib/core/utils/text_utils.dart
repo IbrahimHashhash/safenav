@@ -15,10 +15,10 @@ class TextUtils {
     return similarity <= threshold;
   }
 
-  /// Length-aware match for command keywords. Short words must match (almost)
-  /// exactly; only longer words tolerate edits. This prevents false matches
-  /// between short look-alikes (e.g. "hell"/"help", "on"/"in") while still
-  /// catching mistranscriptions of longer words (e.g. "navigation"/"navigate").
+  
+  
+  
+  
   static bool isSimilarWord(String a, String b) {
     if (a == b) return true;
     final maxLen = a.length > b.length ? a.length : b.length;
@@ -30,10 +30,10 @@ class TextUtils {
     return levenshtein(a, b) <= allowed;
   }
 
-  /// Phrase-level similarity (0..1) that is phonetic-aware and ungated, suited
-  /// to ranking a spoken phrase against canonical command phrases. Unlike
-  /// [tokenSetSimilarity], it does NOT drop weakly-matching tokens, so it keeps
-  /// the discrimination needed to pick the closest command.
+  
+  
+  
+  
   static double phraseSimilarity(String a, String b) {
     final aw = a.split(' ').where((w) => w.isNotEmpty).toList();
     final bw = b.split(' ').where((w) => w.isNotEmpty).toList();

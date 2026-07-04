@@ -1,19 +1,19 @@
-// Smooths a noisy compass heading and decides when it is trustworthy.
-//
-//   1. Circular moving average over a sliding window (handles 0/360 wrap).
-//   2. Stability gate: several CONSECUTIVE samples must agree (within a
-//      tolerance of the running mean) before the heading is trusted; a wild
-//      jump resets stability and the window ("double-check" the heading).
-//
-// Pure Dart, no Flutter/SDK dependencies. Ported from the Google-nav engine.
+
+
+
+
+
+
+
+
 
 import 'geo_math.dart';
 
 class HeadingEstimate {
-  /// Smoothed heading in degrees [0,360), or null when no data yet.
+  
   final double? smoothedHeading;
 
-  /// True only when enough recent samples have agreed.
+  
   final bool isStable;
 
   const HeadingEstimate({required this.smoothedHeading, required this.isStable});

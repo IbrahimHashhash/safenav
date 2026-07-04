@@ -25,8 +25,8 @@ void main() async {
     captureLog: sl<CaptureLogService>(),
   );
 
-  // Let voice commands ("start/stop detection") control the listener, and keep
-  // the dev-screen button in sync via the listener's streaming stream.
+  
+  
   sl<VoiceAssistantService>().detectionController = obstacleListener;
 
   runApp(MyApp(voiceCubit: voiceCubit, obstacleListener: obstacleListener));

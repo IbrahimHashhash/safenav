@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../shared/widgets/caption_card.dart';
@@ -21,6 +23,15 @@ enum _ModelPreview { yolo, depth, freeZone }
 /// Which developer layout is shown: the full debug screen, the obstacle
 /// detection test-recording view, or the GPS navigation recording view.
 enum _DevView { full, detection, gps }
+
+/// One recorded per-frame latency sample (frame id + client end-to-end ms).
+class _LatencySample {
+  final int frameId;
+  final double? endToEndMs;
+  final bool skipped;
+  final DateTime at;
+  const _LatencySample(this.frameId, this.endToEndMs, this.skipped, this.at);
+}
 
 /// Developer/debug screen: live camera preview, the navigation map with the
 /// current coordinates, a caption of the last spoken instruction (navigation
@@ -63,6 +74,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   // (so we release it on leave/dispose, but never while streaming owns it).
   bool _camPreviewStartedByMe = false;
 
+  // Per-frame latency recording (frame id + client end-to-end ms) for export.
+  bool _recordingLatency = false;
+  final List<_LatencySample> _latencySamples = [];
+
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
   Uint8List? _lastYolo;
@@ -75,6 +90,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     _cachePreviews(_result);
     _sub = widget.listener.results.listen((r) {
       if (!mounted) return;
+      if (_recordingLatency) {
+        _latencySamples.add(
+          _LatencySample(r.frameId, r.endToEndMs, r.skipped, DateTime.now()),
+        );
+      }
       setState(() {
         _result = r;
         _cachePreviews(r);
@@ -133,6 +153,51 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     }
     final path = await log.csvPath();
     await Share.shareXFiles([XFile(path)], text: 'SafeNav capture log');
+  }
+
+  void _toggleLatencyRecording() {
+    setState(() {
+      _recordingLatency = !_recordingLatency;
+      if (_recordingLatency) _latencySamples.clear();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_recordingLatency
+            ? 'Recording per-frame latency…'
+            : 'Stopped. ${_latencySamples.length} frames recorded.'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _exportLatencyCsv() async {
+    if (_latencySamples.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No latency samples recorded yet.')),
+      );
+      return;
+    }
+    final buf = StringBuffer('index,frame_id,end_to_end_ms,skipped,timestamp\n');
+    for (var i = 0; i < _latencySamples.length; i++) {
+      final s = _latencySamples[i];
+      buf.writeln('$i,${s.frameId},${s.endToEndMs?.toStringAsFixed(2) ?? ''},'
+          '${s.skipped},${s.at.toIso8601String()}');
+    }
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/latency_${DateTime.now().millisecondsSinceEpoch}.csv');
+      await file.writeAsString(buf.toString(), flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'SafeNav per-frame latency (${_latencySamples.length} frames)',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to export latency CSV: $e')),
+      );
+    }
   }
 
   Future<void> _onCapture() async {
@@ -453,8 +518,42 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         const SizedBox(height: 8),
         _compactMetrics(),
         const SizedBox(height: 8),
+        _latencyRecorderControls(),
+        const SizedBox(height: 8),
         _yoloWithFadedBand(),
         _clearanceCards(),
+      ],
+    );
+  }
+
+  /// Record/export controls for per-frame latency. Records frame_id +
+  /// end-to-end latency for every frame while streaming, then exports a CSV.
+  Widget _latencyRecorderControls() {
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _toggleLatencyRecording,
+            icon: Icon(
+              _recordingLatency
+                  ? Icons.stop_circle
+                  : Icons.fiber_manual_record,
+              size: 18,
+              color: _recordingLatency ? Colors.redAccent : Colors.white70,
+            ),
+            label: Text(
+              _recordingLatency
+                  ? 'Stop (${_latencySamples.length})'
+                  : 'Record latency',
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        OutlinedButton.icon(
+          onPressed: _latencySamples.isEmpty ? null : _exportLatencyCsv,
+          icon: const Icon(Icons.ios_share, size: 18),
+          label: const Text('CSV'),
+        ),
       ],
     );
   }

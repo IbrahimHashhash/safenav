@@ -214,31 +214,18 @@ class NavigationWebSocketDatasource {
     _controller = null;
   }
 
-  /// Builds the navigation WebSocket URL from the configured base URL,
-  /// tolerating whatever form `OBSTACLE_API_URL` is given in:
-  ///   `http://host:8000`            -> `ws://host:8000/ws/navigation`
-  ///   `https://host`                -> `wss://host/ws/navigation`
-  ///   `ws://host:8000`              -> `ws://host:8000/ws/navigation`
-  ///   `ws://host:8000/ws/navigation`-> unchanged (path not duplicated)
+  /// Resolves the WebSocket URL from the configured base URL, normalising only
+  /// the scheme (http -> ws, https -> wss). The URL is used as-is otherwise —
+  /// `OBSTACLE_API_URL` is expected to already include the full endpoint path
+  /// (e.g. `ws://host:8000/ws/navigation`).
   static String _toWsUrl(String baseUrl) {
-    var url = baseUrl.trim();
+    final url = baseUrl.trim();
 
-    // Normalise scheme to ws/wss (leave ws/wss as-is).
     if (url.startsWith('https://')) {
-      url = 'wss://${url.substring('https://'.length)}';
-    } else if (url.startsWith('http://')) {
-      url = 'ws://${url.substring('http://'.length)}';
+      return 'wss://${url.substring('https://'.length)}';
     }
-
-    // Drop any trailing slash(es).
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-
-    // Append the endpoint path only if it is not already there.
-    const path = '/ws/navigation';
-    if (!url.endsWith(path)) {
-      url = '$url$path';
+    if (url.startsWith('http://')) {
+      return 'ws://${url.substring('http://'.length)}';
     }
     return url;
   }

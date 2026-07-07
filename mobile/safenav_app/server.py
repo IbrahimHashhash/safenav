@@ -386,12 +386,15 @@ def _encode_seg_preview(frame: np.ndarray, ground_mask: np.ndarray | None,
     return _encode_preview_bgr(blended, hq)
 
 
-# urgency -> BGR bounding-box colour for the YOLO preview
+# urgency -> BGR bounding-box colour for the YOLO preview.
+# Deep, legible colours (white label text reads well on these dark fills);
+# the old bright neon palette -- especially the bright yellow MEDIUM -- was too
+# harsh/high-contrast on the recordings.
 _URGENCY_COLOR = {
-    "CRITICAL": (0, 0, 255),     # red
-    "HIGH":     (0, 165, 255),   # orange
-    "MEDIUM":   (0, 255, 255),   # yellow
-    "LOW":      (0, 255, 0),     # green
+    "CRITICAL": (40, 40, 190),    # deep red
+    "HIGH":     (30, 90, 190),    # deep orange
+    "MEDIUM":   (150, 110, 30),   # deep teal-blue (was bright yellow)
+    "LOW":      (50, 120, 40),    # deep green
 }
 
 
@@ -413,7 +416,7 @@ def _encode_yolo_preview(frame: np.ndarray, obstacles: list[dict],
         if not bx:
             continue
         x1, y1, x2, y2 = (int(v) for v in bx[:4])
-        color = _URGENCY_COLOR.get(ob.get("urgency"), (0, 255, 0))
+        color = _URGENCY_COLOR.get(ob.get("urgency"), (50, 120, 40))
         cv2.rectangle(vis, (x1, y1), (x2, y2), color, th)
 
         dist = ob.get("distance_m")

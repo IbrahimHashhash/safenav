@@ -34,6 +34,7 @@ dependencies:
   get_it: ^7.7.0
   injectable: ^2.4.4
   azure_stt_flutter: ^0.0.9
+  record: ^6.2.1
   permission_handler: ^11.3.1
   flutter_dotenv: ^5.2.1
   http: ^1.2.0

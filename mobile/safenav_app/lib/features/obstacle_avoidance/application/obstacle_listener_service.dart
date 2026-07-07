@@ -63,6 +63,10 @@ class ObstacleListenerService implements DetectionController {
   static const Duration _reconnectBudget = Duration(seconds: 4);
   static const Duration _reconnectRetryGap = Duration(milliseconds: 500);
 
+  /// After a network drop forces detection to stop, poll for connectivity at
+  /// this cadence and auto-resume detection once the server is reachable again.
+  static const Duration _reconnectWatchInterval = Duration(seconds: 5);
+
   DateTime _lastVibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   StreamSubscription<DetectionResult>? _subscription;
@@ -70,6 +74,13 @@ class ObstacleListenerService implements DetectionController {
   bool _previewsEnabled = false;
   bool _hqPreviews = false;
   int _frameId = 0;
+
+  // Auto-resume after a network drop: set when a disconnection (not the user)
+  // stopped detection, so we poll for connectivity and restart automatically.
+  // Cleared by an explicit user/voice stop or a successful (re)start.
+  bool _resumeWhenOnline = false;
+  bool _reconnecting = false;
+  Timer? _reconnectWatcher;
 
   // Backpressure: at most one streamed frame in flight at a time.
   int? _awaitingFrameId;
@@ -178,6 +189,10 @@ class ObstacleListenerService implements DetectionController {
     }
 
     _running = true;
+    // A (re)start supersedes any pending network auto-resume.
+    _resumeWhenOnline = false;
+    _reconnectWatcher?.cancel();
+    _reconnectWatcher = null;
     _emitStreaming(true);
     _repeatGate.reset();
     unawaited(_captureLoop());
@@ -235,8 +250,9 @@ class ObstacleListenerService implements DetectionController {
           continue;
         }
         voiceCubit.speakObstacleInstruction(
-            'Obstacle detection stopped because the internet disconnected.');
-        await stop();
+            'Obstacle detection paused because the internet disconnected. '
+            'It will resume automatically when you are back online.');
+        await _suspendForNetwork();
         break;
       }
 
@@ -295,6 +311,48 @@ class ObstacleListenerService implements DetectionController {
       await Future<void>.delayed(_reconnectRetryGap);
     }
     return datasource.isConnected;
+  }
+
+  /// Stops the pipeline after a sustained network drop but marks it to
+  /// auto-resume: a background watcher polls for connectivity and restarts
+  /// detection once the server is reachable again.
+  Future<void> _suspendForNetwork() async {
+    final wasRunning = _running;
+    await _teardown();
+    await datasource.disconnect();
+    await cameraSource.dispose();
+    if (wasRunning) _emitStreaming(false);
+    _resumeWhenOnline = true;
+    _startReconnectWatcher();
+  }
+
+  void _startReconnectWatcher() {
+    _reconnectWatcher?.cancel();
+    _reconnectWatcher = Timer.periodic(_reconnectWatchInterval, (t) async {
+      // The watcher is obsolete once we're running again or auto-resume was
+      // cancelled (e.g. the user stopped detection explicitly).
+      if (!_resumeWhenOnline || _running) {
+        t.cancel();
+        _reconnectWatcher = null;
+        return;
+      }
+      if (_reconnecting) return; // don't overlap probes
+      _reconnecting = true;
+      try {
+        if (!await datasource.connect()) return; // still offline; retry later
+        // Back online: resume detection. start() clears _resumeWhenOnline and
+        // cancels this watcher on success.
+        final result = await start();
+        if (result == StreamStartResult.started) {
+          voiceCubit.speakObstacleInstruction(
+              'Back online. Obstacle detection resumed.');
+        }
+        // On failure (e.g. camera not ready yet) start() already cleaned up;
+        // the next tick will try again.
+      } finally {
+        _reconnecting = false;
+      }
+    });
   }
 
   void _onResult(DetectionResult result) {
@@ -426,6 +484,10 @@ class ObstacleListenerService implements DetectionController {
   }
 
   Future<void> stop() async {
+    // An explicit stop (user/voice) cancels any pending network auto-resume.
+    _resumeWhenOnline = false;
+    _reconnectWatcher?.cancel();
+    _reconnectWatcher = null;
     final wasRunning = _running;
     await _teardown();
     await datasource.disconnect();
@@ -434,6 +496,9 @@ class ObstacleListenerService implements DetectionController {
   }
 
   void dispose() {
+    _resumeWhenOnline = false;
+    _reconnectWatcher?.cancel();
+    _reconnectWatcher = null;
     stop();
     _resultsController.close();
     _captureEventsController.close();

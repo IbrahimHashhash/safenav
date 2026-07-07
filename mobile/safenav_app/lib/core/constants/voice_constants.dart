@@ -44,8 +44,8 @@ class VoiceConstants {
     'morning', 'afternoon', 'evening',
   ];
 
-  /// Verbs that, together with "name" (or the standalone "rename"), request a
-  /// name change, e.g. "change my name", "update my name", "rename me".
+  
+  
   static const changeNameTriggers = [
     'change', 'rename', 'update', 'reset', 'edit',
   ];

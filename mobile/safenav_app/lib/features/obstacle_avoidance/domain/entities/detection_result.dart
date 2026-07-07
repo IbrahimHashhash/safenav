@@ -1,38 +1,38 @@
 import 'dart:typed_data';
 
-/// One vertical free-zone region from the server's `free_zones` analysis.
-/// [free] true = clear (green), false = blocked (red). [clearanceM] is the
-/// estimated clear distance for the region in meters, when provided. Regions
-/// are ordered left-to-right across the analysis band.
+
+
+
+
 class FreeZone {
   final bool free;
   final double? clearanceM;
 
-  /// Human label for the region (e.g. "Slight left"), when the server keys the
-  /// zones by name. Null for positional/list shapes.
+  
+  
   final String? label;
 
   const FreeZone(this.free, {this.clearanceM, this.label});
 }
 
-/// Parses the server's `free_zones` field into ordered [FreeZone]s.
-///
-/// Tolerant of the shapes the navigation pipeline might emit:
-///  - region-keyed map (current server):
-///    `{"left": {"clear": false, "clearance_m": 0.86}, "slight_left": {...},
-///      "centre": {...}, "slight_right": {...}, "right": {...}}`
-///  - list of bools:           `[true, false, true, true, false]`
-///  - list of objects:         `[{"clear": true, "clearance_m": 2.3}, ...]`
-///  - list of FREE indices:    `[0, 2, 4]` (interpreted over 5 regions)
+
+
+
+
+
+
+
+
+
 List<FreeZone> parseFreeZones(dynamic raw, {int regionCount = 5}) {
   if (raw is Map) {
-    // Wrapper object that holds a list under a known key.
+    
     for (final k in ['regions', 'zones', 'free_zones', 'bands', 'items']) {
       if (raw[k] is List) {
         return parseFreeZones(raw[k], regionCount: regionCount);
       }
     }
-    // Region-keyed map: {left: {...}, slight_left: {...}, ...}.
+    
     if (raw.values.any((v) => v is Map)) {
       return _parseRegionMap(raw);
     }
@@ -41,7 +41,7 @@ List<FreeZone> parseFreeZones(dynamic raw, {int regionCount = 5}) {
 
   if (raw is! List || raw.isEmpty) return const [];
 
-  // All-numeric -> indices of the free regions.
+  
   if (raw.every((e) => e is num)) {
     final freeIdx = raw.map((e) => (e as num).toInt()).toSet();
     return List.generate(regionCount, (i) => FreeZone(freeIdx.contains(i)));
@@ -61,7 +61,7 @@ List<FreeZone> parseFreeZones(dynamic raw, {int regionCount = 5}) {
   return out;
 }
 
-/// Canonical left-to-right region order for the named-region map.
+
 const List<String> _regionOrder = [
   'left',
   'slight_left',
@@ -83,7 +83,7 @@ List<FreeZone> _parseRegionMap(Map raw) {
     return s.isEmpty ? k : '${s[0].toUpperCase()}${s.substring(1)}';
   }
 
-  // Known regions first, in left-to-right order.
+  
   for (final key in _regionOrder) {
     final v = raw[key];
     if (v is Map && !used.contains(key)) {
@@ -92,7 +92,7 @@ List<FreeZone> _parseRegionMap(Map raw) {
           clearanceM: _zoneClearance(v), label: pretty(key)));
     }
   }
-  // Any remaining map entries, in insertion order.
+  
   raw.forEach((k, v) {
     final key = k.toString();
     if (v is Map && !used.contains(key)) {
@@ -148,16 +148,16 @@ bool _zoneIsFree(Map e) {
   return false;
 }
 
-/// A single detected obstacle from the server's `obstacles` array.
+
 class DetectedObstacle {
   final String label;
   final double confidence;
 
-  /// Estimated distance in meters, when the server provides it. The depth
-  /// model produces this; the exact JSON key can vary, so several are tried.
+  
+  
   final double? distanceMeters;
 
-  /// Normalised bounding box [x1, y1, x2, y2] in 0..1 of the frame.
+  
   final List<double> bbox;
 
   const DetectedObstacle({
@@ -170,7 +170,7 @@ class DetectedObstacle {
   factory DetectedObstacle.fromJson(Map<String, dynamic> json) {
     double? num2(dynamic v) => v is num ? v.toDouble() : null;
 
-    // Distance lives under different names depending on the server pipeline.
+    
     final distance = num2(json['distance']) ??
         num2(json['distance_m']) ??
         num2(json['depth']) ??
@@ -191,10 +191,10 @@ class DetectedObstacle {
   }
 }
 
-/// Server-side timing metrics for one processed frame.
-///
-/// Keeps the raw map (so every metric can be listed) plus typed accessors for
-/// the common per-model timings.
+
+
+
+
 class ServerMetrics {
   final Map<String, dynamic> raw;
 
@@ -218,7 +218,7 @@ class ServerMetrics {
   double? get serverFps => _ms('server_fps');
   double? get rollingFps => _ms('rolling_fps');
 
-  /// All scalar (num) metrics as label/value pairs, for a full listing.
+  
   List<MapEntry<String, num>> get scalarEntries {
     final out = <MapEntry<String, num>>[];
     raw.forEach((key, value) {
@@ -228,17 +228,17 @@ class ServerMetrics {
   }
 }
 
-/// The full result for a single frame: the spoken instruction, detected
-/// obstacles, server metrics, and (when previews were requested) the decoded
-/// model preview images. [endToEndMs] is measured on the client.
+
+
+
 class DetectionResult {
   final int frameId;
   final String instruction;
   final List<DetectedObstacle> obstacles;
   final List<FreeZone> freeZones;
 
-  /// The raw `free_zones` value from the server, kept for diagnostics when the
-  /// parser can't interpret its shape.
+  
+  
   final dynamic freeZonesRaw;
 
   final ServerMetrics metrics;
@@ -246,13 +246,13 @@ class DetectionResult {
   final int? frameHeight;
   final bool skipped;
 
-  /// The obstacle the server flagged as highest priority (e.g. the blocking
-  /// car), when present.
+  
+  
   final DetectedObstacle? highestPriority;
 
-  /// Mean Absolute Difference vs. the previous processed frame (the server's
-  /// frame-similarity signal). Lower = more similar; the server skips frames
-  /// below its threshold. Null when the server doesn't report it.
+  
+  
+  
   final double? mad;
 
   final bool depthAttached;
@@ -260,16 +260,16 @@ class DetectionResult {
   final bool yoloAttached;
   final bool maskAttached;
 
-  // Preview image bytes, filled in as binary messages arrive (dev only).
+  
   Uint8List? depthPreview;
   Uint8List? segPreview;
   Uint8List? yoloPreview;
   Uint8List? maskPreview;
 
-  /// Number of preview attachments received so far (correlation bookkeeping).
+  
   int receivedAttachments = 0;
 
-  /// Client-measured round trip: frame sent -> JSON received, in ms.
+  
   double? endToEndMs;
 
   DetectionResult({
@@ -290,7 +290,7 @@ class DetectionResult {
     required this.maskAttached,
   });
 
-  /// How many binary preview messages this response will be followed by.
+  
   int get expectedAttachments =>
       (depthAttached ? 1 : 0) +
       (segAttached ? 1 : 0) +
@@ -302,12 +302,12 @@ class DetectionResult {
   static bool _labelIsCar(String? label) =>
       label != null && label.toLowerCase().contains('car');
 
-  /// Whether a car is present (as the highest-priority obstacle or in the list).
+  
   bool get hasCar =>
       _labelIsCar(highestPriority?.label) ||
       obstacles.any((o) => _labelIsCar(o.label));
 
-  /// Smallest clearance among BLOCKED free-zone regions (meters), or null.
+  
   double? get minBlockedClearanceM {
     double? m;
     for (final z in freeZones) {
@@ -318,12 +318,12 @@ class DetectionResult {
     return m;
   }
 
-  /// Estimated distance (meters) to the nearest detected car, using:
-  ///  1. the car obstacle's own distance, if the server provides one;
-  ///  2. else the clearance of the free-zone region the car's bbox centre falls
-  ///     in (the car blocks that region);
-  ///  3. else the smallest blocked-region clearance.
-  /// Returns null when no car / no distance signal is available.
+  
+  
+  
+  
+  
+  
   double? carDistanceMeters() {
     final cars = <DetectedObstacle>[
       if (_labelIsCar(highestPriority?.label)) highestPriority!,
@@ -345,12 +345,12 @@ class DetectionResult {
     return best ?? minBlockedClearanceM;
   }
 
-  /// Label of the obstacle this frame is primarily warning about (the
-  /// highest-priority obstacle), or null.
+  
+  
   String? get primaryLabel => highestPriority?.label;
 
-  /// Which free-zone region the primary obstacle's bbox centre falls in
-  /// (0 = leftmost), or null when unknown.
+  
+  
   int? primaryRegionIndex() {
     final hp = highestPriority;
     if (hp == null || hp.bbox.length < 4 || freeZones.isEmpty) return null;
@@ -358,9 +358,9 @@ class DetectionResult {
     return (centreX * freeZones.length).floor().clamp(0, freeZones.length - 1);
   }
 
-  /// Estimated distance (meters) to the primary obstacle: its own distance,
-  /// else the clearance of the region it occupies, else the smallest blocked
-  /// clearance. Used to decide whether a new warning is "nearly the same".
+  
+  
+  
   double? primaryDistanceMeters() {
     final hp = highestPriority;
     if (hp != null) {
@@ -402,11 +402,11 @@ class DetectionResult {
     double? num2(dynamic v) => v is num ? v.toDouble() : null;
     double? metric(String k) =>
         metricsRaw is Map ? num2(metricsRaw[k]) : null;
-    // MAD sources, in priority order:
-    //  - skipped frames send a FRESH value top-level as `sig_mad` (the response
-    //    is a copy of the last processed one, so its metrics.frame_signature_mad
-    //    would be stale — top-level wins).
-    //  - processed frames report it inside metrics as `frame_signature_mad`.
+    
+    
+    
+    
+    
     final mad = num2(json['sig_mad']) ??
         num2(json['mad']) ??
         num2(json['frame_mad']) ??

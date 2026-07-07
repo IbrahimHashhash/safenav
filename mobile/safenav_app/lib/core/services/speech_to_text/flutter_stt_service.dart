@@ -5,18 +5,18 @@ import 'package:azure_stt_flutter/azure_stt_flutter.dart';
 import 'package:record/record.dart';
 import 'stt_service.dart';
 
-/// Azure speech-to-text with a pre-roll microphone buffer.
-///
-/// The microphone is started (via [primeMic]) the instant the user taps, well
-/// before the Azure WebSocket has connected. Captured PCM is pushed into a
-/// single-subscription [StreamController], which buffers it until Azure
-/// subscribes in [startListening]. Azure then receives the full pre-roll first,
-/// followed by live audio — so the user's first word is never lost while the
-/// session is still being established.
-///
-/// We pass this buffered stream to the plugin as its `externalAudioStream`,
-/// which means the plugin does NOT start its own microphone — there is only one
-/// active recorder (this one), so there is no contention.
+
+
+
+
+
+
+
+
+
+
+
+
 class FlutterSttService implements SttService {
   final AzureSpeechToText _azureStt;
   final AudioRecorder _recorder = AudioRecorder();
@@ -37,44 +37,44 @@ class FlutterSttService implements SttService {
   @override
   Future<bool> initialize() async => true;
 
-  /// Raw PCM format Azure expects (and that the recorder produces): 16 kHz,
-  /// mono, 16-bit little-endian.
-  ///
-  /// `manageBluetooth: false` is critical: by default the recorder grabs
-  /// Bluetooth SCO and toggles the Android audio-manager mode on every
-  /// start/stop. That mode churn ducked/suppressed our cue sounds and TTS (and
-  /// could leave audio playback stuck), so we opt out of it.
+  
+  
+  
+  
+  
+  
+  
   static const RecordConfig _config = RecordConfig(
     encoder: AudioEncoder.pcm16bits,
     sampleRate: 16000,
     numChannels: 1,
-    // On-device audio conditioning applied BEFORE the PCM enters our buffer
-    // and is streamed to Azure. Because we feed Azure an externalAudioStream,
-    // Azure's own front-end DSP is bypassed, so the signal we capture must be
-    // cleaned here. These flags request the OS audio effects and degrade
-    // gracefully (no-op) on devices that don't implement them.
+    
+    
+    
+    
+    
     autoGain: true,
     noiseSuppress: true,
     echoCancel: true,
     androidConfig: AndroidRecordConfig(
       manageBluetooth: false,
-      // Selects the Android capture path tuned for speech recognition; this is
-      // also what lets the platform insert its tuned NS/AGC where supported.
+      
+      
       audioSource: AndroidAudioSource.voiceRecognition,
     ),
   );
 
   @override
   Future<void> primeMic() async {
-    // Drop any previous capture session before starting a fresh one.
+    
     await _stopMic();
 
     if (!await _recorder.hasPermission()) {
       throw Exception('Microphone permission not granted');
     }
 
-    // A single-subscription controller buffers everything we capture now and
-    // replays it to Azure once it subscribes in startListening().
+    
+    
     final controller = StreamController<Uint8List>();
     _audioController = controller;
 
@@ -123,7 +123,7 @@ class FlutterSttService implements SttService {
       onDone: onTimeout,
     );
 
-    // Feed Azure from the pre-roll buffer; the plugin will NOT open its own mic.
+    
     await _azureStt.startListening(externalAudioStream: controller.stream);
   }
 

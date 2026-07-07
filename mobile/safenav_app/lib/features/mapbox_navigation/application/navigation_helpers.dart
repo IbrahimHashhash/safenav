@@ -93,7 +93,7 @@ double distancePointToPolylineMeters(
   return minDist;
 }
 
-/// Result of projecting a point onto a polyline.
+
 class PolylineProjection {
   const PolylineProjection({
     required this.segmentIndex,
@@ -103,27 +103,27 @@ class PolylineProjection {
     required this.snappedLng,
   });
 
-  /// Index of the segment [i, i+1] the point projected onto.
+  
   final int segmentIndex;
 
-  /// Perpendicular distance from the point to the route, in meters.
+  
   final double distanceMeters;
 
-  /// Bearing of the matched segment (the direction the user *should* face),
-  /// in degrees 0..360.
+  
+  
   final double segmentBearing;
 
   final double snappedLat;
   final double snappedLng;
 }
 
-/// Projects a GPS point onto a route polyline and returns the closest segment,
-/// its bearing, and the snapped point.
-///
-/// This is what makes guidance "path-relative": instead of pointing the user
-/// at the next maneuver node (which is wrong when walking along the edge of a
-/// wide path), we align them with the direction of the route segment they are
-/// currently on.
+
+
+
+
+
+
+
 PolylineProjection? projectOntoPolyline(
   double pLat,
   double pLng,
@@ -191,9 +191,9 @@ PolylineProjection? projectOntoPolyline(
   );
 }
 
-/// Returns the index of the polyline vertex closest to the given point.
-/// Used to anchor each maneuver to a position along the route so that progress
-/// can be tracked by polyline position rather than by an exact GPS hit.
+
+
+
 int nearestVertexIndex(
   double lat,
   double lng,
@@ -213,12 +213,12 @@ int nearestVertexIndex(
   return bestIdx;
 }
 
-/// Returns a point [lat, lng] that is [aheadMeters] further along the polyline,
-/// starting from [snappedLat]/[snappedLng] on segment [segmentIndex].
-///
-/// Used to derive a STABLE "desired heading" target: aiming a few meters ahead
-/// along the route avoids the ~90° flip that the raw current-segment bearing
-/// suffers right at a maneuver vertex (which caused left/right oscillation).
+
+
+
+
+
+
 List<double>? pointAheadOnPolyline(
   List<List<double>> coords,
   int segmentIndex,
@@ -265,12 +265,12 @@ double _haversineMeters(
   return r * c;
 }
 
-/// Threshold (degrees) below which a heading deviation is treated as "on the
-/// path" — i.e. the user is still going straight. Slight deviations are NOT
-/// announced as turns because the user is already walking the correct path.
+
+
+
 const double kStraightThresholdDeg = 45.0;
 
-/// Threshold (degrees) above which a turn is a reversal ("turn around").
+
 const double kUTurnThresholdDeg = 150.0;
 
 String describeTurn(double delta) {
@@ -315,7 +315,7 @@ String modifierToPhrase(String? modifier, {String fallbackType = ''}) {
     case 'slight left':
     case 'slight right':
     case 'straight':
-      // On a correct path, slight deviations are not announced as turns.
+      
       return 'continue straight ahead';
     case 'uturn':
       return 'turn around';
@@ -332,7 +332,7 @@ String modifierToPhrase(String? modifier, {String fallbackType = ''}) {
   }
 }
 
-/// Whether a phrase is an actual turn instruction (vs. going straight).
+
 bool isTurnInstruction(String phrase) => phrase.startsWith('turn');
 
 String capitalizeFirst(String s) {

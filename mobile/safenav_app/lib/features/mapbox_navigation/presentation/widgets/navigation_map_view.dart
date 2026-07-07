@@ -10,14 +10,14 @@ import '../../domain/entities/navigation_snapshot.dart';
 import '../cubit/navigation_map_cubit.dart';
 import 'orientation_arrow.dart';
 
-/// Live map: tiles, the active route polyline, the destination pin, and a
-/// Google-Maps-style orientation arrow that follows the user.
-///
-/// The map shows and snaps to the user's current location even when navigation
-/// is NOT active, by subscribing to the device GPS directly. When navigation
-/// is running, the (smoothed) navigation snapshot takes precedence.
-///
-/// Falls back to OpenStreetMap tiles when [mapboxToken] is empty.
+
+
+
+
+
+
+
+
 class NavigationMapView extends StatefulWidget {
   const NavigationMapView({
     super.key,
@@ -29,7 +29,7 @@ class NavigationMapView extends StatefulWidget {
   final String mapboxToken;
   final String mapboxStyle;
 
-  /// Show a small live lat/lng/heading overlay (used by the developer screen).
+  
   final bool showCoordinates;
 
   @override
@@ -98,11 +98,11 @@ class _NavigationMapViewState extends State<NavigationMapView> {
         });
       });
     } catch (_) {
-      // No location available; map stays at campus center.
+      
     }
   }
 
-  /// Resolves the location to show: navigation snapshot wins, else live GPS.
+  
   LatLng? _resolveUser(NavigationSnapshot snapshot) {
     if (snapshot.hasUserLocation) {
       return LatLng(snapshot.userLat!, snapshot.userLng!);
@@ -213,7 +213,7 @@ class _NavigationMapViewState extends State<NavigationMapView> {
                   heroTag: 'recenter',
                   onPressed: () {
                     setState(() => _autoFollow = true);
-                    _lastFollowed = null; // force a re-center
+                    _lastFollowed = null; 
                     _follow(_resolveUser(snapshot));
                   },
                   child: const Icon(Icons.my_location),

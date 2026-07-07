@@ -4,8 +4,8 @@ import 'package:gal/gal.dart';
 
 import 'gallery_saver.dart';
 
-/// [GallerySaver] backed by the `gal` package. Saves into a "SafeNav" album in
-/// the device gallery (Android MediaStore / iOS Photos).
+
+
 class GalGallerySaver implements GallerySaver {
   static const String _album = 'SafeNav';
 
@@ -17,7 +17,7 @@ class GalGallerySaver implements GallerySaver {
     try {
       await Gal.putImageBytes(bytes, album: _album, name: name);
     } on GalException {
-      // Fall back to the default gallery location if the album write fails.
+      
       await Gal.putImageBytes(bytes, name: name);
     }
   }

@@ -1,22 +1,22 @@
-// Builds a navigable route model from a raw polyline and a set of candidate
-// maneuver nodes (e.g. the Directions API step boundaries).
-//
-// Responsibilities:
-//   * Clean the polyline vertices and compute cumulative along-route distances.
-//   * Anchor each maneuver node to the nearest polyline vertex.
-//   * Classify the turn at each anchor from the geometry (bearing change),
-//     keeping ONLY significant turns. Small deviations are collapsed (the
-//     engine speaks "continue straight ahead" through them). No notion of
-//     "slight" or "sharp" exists here.
-//
-// Pure Dart, no Flutter/SDK dependencies. Ported from the Google-nav engine.
+
+
+
+
+
+
+
+
+
+
+
+
 
 import 'geo_math.dart';
 import 'geo_point.dart';
 
 enum TurnDirection { left, right, straight }
 
-/// A significant turn anchored to a vertex on the route polyline.
+
 class RouteManeuver {
   final int vertexIndex;
   final GeoPoint location;
@@ -34,13 +34,13 @@ class RouteManeuver {
 }
 
 class RoutePath {
-  /// Cleaned polyline vertices (consecutive duplicates removed).
+  
   final List<GeoPoint> vertices;
 
-  /// Cumulative along-route distance at each vertex (metres). cumulative[0]==0.
+  
   final List<double> cumulative;
 
-  /// Significant turns only, ordered by [RouteManeuver.distanceAlong].
+  
   final List<RouteManeuver> turns;
 
   RoutePath._(this.vertices, this.cumulative, this.turns);
@@ -52,7 +52,7 @@ class RoutePath {
   PolylineProjection project(GeoPoint point) =>
       GeoMath.projectOntoPolyline(point, vertices, cumulative);
 
-  /// Bearing of the segment starting at vertex [index].
+  
   double segmentBearing(int index) {
     final i = index.clamp(0, vertices.length - 2);
     return GeoMath.bearing(vertices[i], vertices[i + 1]);
@@ -76,7 +76,7 @@ class RoutePath {
 
     for (final node in maneuverNodes) {
       final anchor = _nearestVertexIndex(node, vertices);
-      // A turn needs a segment on both sides; start/destination are separate.
+      
       if (anchor <= 0 || anchor >= vertices.length - 1) continue;
       if (!seenVertices.add(anchor)) continue;
 
@@ -85,7 +85,7 @@ class RoutePath {
       final delta = GeoMath.signedAngularDifference(incoming, outgoing);
 
       if (delta.abs() < significantTurnDegrees) {
-        continue; // collapse small deviation -> stays "continue straight ahead"
+        continue; 
       }
 
       turns.add(RouteManeuver(

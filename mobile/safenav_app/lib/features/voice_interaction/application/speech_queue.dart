@@ -10,8 +10,8 @@ class SpeechRequest {
   final String text;
   final SpeechPriority priority;
 
-  /// Called once when this request finishes speaking OR is skipped. Used to
-  /// know when an assistant reply is done (to end the conversation window).
+  
+  
   final void Function()? onDone;
 
   const SpeechRequest(this.text, this.priority, {this.onDone});
@@ -34,9 +34,9 @@ class SpeechQueue {
   bool get isActive => _currentRequest != null;
 
   Future<void> enqueue(SpeechRequest incoming) async {
-    // Obstacle and navigation guidance is only useful when fresh. Keep at most
-    // the newest pending request of that kind so the TTS never works through a
-    // backlog of stale instructions.
+    
+    
+    
     if (incoming.priority == SpeechPriority.navigation ||
         incoming.priority == SpeechPriority.obstacle) {
       _queue.removeWhere((r) => r.priority == incoming.priority);
@@ -72,9 +72,9 @@ class SpeechQueue {
     await _speakNow(_queue.removeAt(0));
   }
 
-  /// Stops any currently-speaking obstacle/navigation line and drops queued
-  /// ones, leaving assistant speech untouched. Used when a conversation starts
-  /// so guidance never talks over the user.
+  
+  
+  
   Future<void> clearNonAssistant() async {
     _queue.removeWhere((r) => r.priority != SpeechPriority.assistant);
     final current = _currentRequest;
@@ -90,9 +90,9 @@ class SpeechQueue {
     }
   }
 
-  /// Stops ALL speech (any priority, including an assistant reply) and clears
-  /// the queue. Used when the user pushes to talk so nothing keeps speaking
-  /// over them.
+  
+  
+  
   Future<void> clearAll() async {
     _queue.clear();
     final current = _currentRequest;

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-/// Start/stop button for streaming camera frames to the detection server.
-/// Shared by the user and developer screens so both control the same stream.
+
+
 class StreamingButton extends StatelessWidget {
   const StreamingButton({
     super.key,

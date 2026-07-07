@@ -12,26 +12,26 @@ import '../domain/entities/navigation_snapshot.dart';
 import '../domain/entities/route_entity.dart';
 import '../domain/usecases/get_route_usecase.dart';
 
-/// Which directions API generates the route. The post-processing engine is the
-/// same for both — only the route geometry/maneuvers come from a different API.
+
+
 enum NavProvider { mapbox, google }
 
-/// Pedestrian turn-by-turn navigation engine.
-///
-/// The post-processing (route model, turn classification, distances,
-/// orientation, speech vocabulary, cooldown/dedup) is the pure-Dart engine
-/// under `domain/engine` (ported from the Google-nav reference so the two apps
-/// behave identically). This service is the platform boundary: it builds a
-/// [RoutePath] from the Mapbox route, feeds GPS + compass events into the
-/// [NavEngine] and [HeadingFilter], speaks whatever the engine emits, and
-/// publishes a [NavigationSnapshot] for the map UI.
+
+
+
+
+
+
+
+
+
 class NavigationService {
   static const double _offRouteThreshold = 25.0;
   static const int _offRouteFixesRequired = 3;
 
-  /// Throttle compass-driven re-evaluations (speech is further gated by the
-  /// engine's own cooldown). Lets orientation corrections fire while the user
-  /// is stationary and only rotating.
+  
+  
+  
   static const Duration _compassEvalInterval = Duration(milliseconds: 300);
 
   final GetRouteUseCase _getRouteMapbox;
@@ -41,8 +41,8 @@ class NavigationService {
 
   NavProvider _provider;
 
-  // Route + engine.
-  RouteEntity? _currentRoute; // kept for the map polyline / snapshot
+  
+  RouteEntity? _currentRoute; 
   RoutePath? _routePath;
   NavEngine? _engine;
   Location? _currentDestination;
@@ -51,7 +51,7 @@ class NavigationService {
   bool _isRerouting = false;
   int _consecutiveOffRouteFixes = 0;
 
-  // Sensors.
+  
   StreamSubscription<Position>? _locationSub;
   StreamSubscription<double?>? _compassSub;
   Position? _currentPosition;
@@ -60,7 +60,7 @@ class NavigationService {
   HeadingEstimate _heading = HeadingEstimate.empty;
   DateTime _lastCompassEval = DateTime.fromMillisecondsSinceEpoch(0);
 
-  // Snapshot.
+  
   double? _distanceToDestination;
   String? _lastInstruction;
   final StreamController<NavigationSnapshot> _snapshotController =
@@ -82,12 +82,12 @@ class NavigationService {
   GetRouteUseCase _getRouteFor(NavProvider p) =>
       p == NavProvider.google ? _getRouteGoogle : _getRouteMapbox;
 
-  // --- Public API -----------------------------------------------------------
+  
 
   bool get isNavigating => _isNavigating;
   bool get hasRoute => _currentRoute != null;
 
-  /// Active route provider (Mapbox or Google).
+  
   NavProvider get provider => _provider;
 
   Stream<NavigationSnapshot> get snapshots => _snapshotController.stream;
@@ -173,11 +173,11 @@ class NavigationService {
     _snapshotController.close();
   }
 
-  /// Switches the directions provider. If a destination is active, the route is
-  /// re-fetched from the current position via the new provider (and, while
-  /// navigating, the engine is rebuilt so guidance continues seamlessly). The
-  /// post-processing/orientation behaviour is identical for both providers.
-  /// Returns null on success, or an error message.
+  
+  
+  
+  
+  
   Future<String?> setProvider(NavProvider next) async {
     if (next == _provider) return null;
     _provider = next;
@@ -185,7 +185,7 @@ class NavigationService {
     final dest = _currentDestination;
     final pos = _currentPosition;
     if (dest == null || pos == null) {
-      // No active route: the new provider applies to the next "navigate to".
+      
       _publishSnapshot();
       return null;
     }
@@ -211,7 +211,7 @@ class NavigationService {
     }
   }
 
-  // --- Sensors --------------------------------------------------------------
+  
 
   void _startSensors() {
     _locationSub?.cancel();
@@ -266,14 +266,14 @@ class NavigationService {
     }
   }
 
-  // --- Core evaluation ------------------------------------------------------
+  
 
   void _evaluate(GeoPoint geo, DateTime now) {
     final engine = _engine;
     final path = _routePath;
     if (engine == null || path == null) return;
 
-    // Off-route detection (cross-track from the route polyline).
+    
     final proj = path.project(geo);
     if (proj.crossTrackDistance > _offRouteThreshold) {
       _consecutiveOffRouteFixes++;
@@ -333,7 +333,7 @@ class NavigationService {
     }
   }
 
-  // --- Helpers --------------------------------------------------------------
+  
 
   RoutePath? _buildRoutePath(RouteEntity route) {
     final coords = route.coordinates;
@@ -349,8 +349,8 @@ class NavigationService {
     return RoutePath.build(polyline: polyline, maneuverNodes: nodes);
   }
 
-  /// Forwards an instruction to TTS + the snapshot. The engine already applies
-  /// cooldown and de-duplication, so this does not re-gate.
+  
+  
   void _speak(String text) {
     _lastInstruction = text;
     _publishSnapshot();

@@ -9,9 +9,9 @@ import '../../voice_interaction/presentation/widgets/listening_view.dart';
 import '../../voice_interaction/presentation/widgets/processing_view.dart';
 import '../../voice_interaction/presentation/widgets/speaking_view.dart';
 
-/// User-facing screen: a full-screen push-to-talk surface and captions for the
-/// recognized input and the spoken reply. Obstacle detection is controlled by
-/// voice ("start/stop detection") here — its button lives on the dev screen.
+
+
+
 class UserScreen extends StatefulWidget {
   const UserScreen({super.key});
 
@@ -27,10 +27,10 @@ class _UserScreenState extends State<UserScreen> {
     if (state is VoiceListening) {
       cubit.cancelListening();
     } else {
-      // Any other state (idle, speaking, processing, error): a tap means
-      // "let me talk now". startListening() silences whatever is currently
-      // speaking — guidance or an assistant reply — and opens the mic, so the
-      // behaviour is identical no matter what the assistant was doing.
+      
+      
+      
+      
       cubit.startListening();
     }
   }
@@ -42,19 +42,19 @@ class _UserScreenState extends State<UserScreen> {
         if (state is VoiceProcessing && state.input.isNotEmpty) {
           setState(() => _inputCaption = state.input);
         } else if (state is VoiceIdle || state is VoiceListening) {
-          // A new turn (or going idle): drop the input caption so it fades
-          // away instead of lingering statically on screen.
+          
+          
           if (_inputCaption.isNotEmpty) {
             setState(() => _inputCaption = '');
           }
         }
       },
       builder: (context, state) {
-        // Captions are not static: the "You said" card shows only while the
-        // turn is being processed/spoken, and "Assistant" only while speaking.
-        // The reply text is read straight off the speaking state so it shows
-        // even for messages spoken before this screen subscribed (e.g. the
-        // launch welcome).
+        
+        
+        
+        
+        
         final replyText = state is VoiceSpeaking ? state.text : '';
         final showInput =
             (state is VoiceProcessing || state is VoiceSpeaking) &&
@@ -88,7 +88,7 @@ class _UserScreenState extends State<UserScreen> {
 
         return Stack(
           children: [
-            // Push-to-talk fills the whole screen.
+            
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -97,10 +97,10 @@ class _UserScreenState extends State<UserScreen> {
               ),
             ),
 
-            // Bottom: captions for input speech and spoken reply.
-            // Wrapped in IgnorePointer so taps over the captions fall through
-            // to the full-screen push-to-talk GestureDetector above. The cards
-            // stay visible and are still announced by TalkBack via Semantics.
+            
+            
+            
+            
             Positioned(
               left: 0,
               right: 0,

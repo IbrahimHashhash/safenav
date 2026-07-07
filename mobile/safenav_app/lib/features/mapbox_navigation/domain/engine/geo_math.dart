@@ -1,8 +1,8 @@
-// Pure geometric helpers for navigation. No Flutter/SDK dependencies.
-//
-// All bearings are in degrees, clockwise from true north (0 = north,
-// 90 = east), matching flutter_compass / Google Maps conventions.
-// Ported from the Google-nav reference engine.
+
+
+
+
+
 
 import 'dart:math' as math;
 
@@ -13,24 +13,24 @@ const double _earthRadiusMeters = 6371000.0;
 double _degToRad(double d) => d * math.pi / 180.0;
 double _radToDeg(double r) => r * 180.0 / math.pi;
 
-/// Result of projecting a point onto a polyline.
+
 class PolylineProjection {
-  /// Index of the segment the point projected onto. The segment runs from
-  /// vertex [segmentIndex] to vertex [segmentIndex] + 1.
+  
+  
   final int segmentIndex;
 
-  /// The point on the polyline closest to the query point.
+  
   final GeoPoint projectedPoint;
 
-  /// Distance travelled ALONG the polyline from its start to [projectedPoint]
-  /// (sum of full preceding segments + partial current segment), in metres.
+  
+  
   final double distanceAlong;
 
-  /// Perpendicular (cross-track) distance from the query point to the
-  /// polyline, in metres. Small => the user is essentially on the line.
+  
+  
   final double crossTrackDistance;
 
-  /// Parametric position [0,1] of the projection within its segment.
+  
   final double t;
 
   const PolylineProjection({
@@ -45,7 +45,7 @@ class PolylineProjection {
 class GeoMath {
   GeoMath._();
 
-  /// Great-circle (haversine) distance between two points, in metres.
+  
   static double distanceMeters(GeoPoint a, GeoPoint b) {
     final phi1 = _degToRad(a.latitude);
     final phi2 = _degToRad(b.latitude);
@@ -56,7 +56,7 @@ class GeoMath {
     return _earthRadiusMeters * 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
   }
 
-  /// Initial bearing from [a] to [b], degrees clockwise from north, [0,360).
+  
   static double bearing(GeoPoint a, GeoPoint b) {
     final lat1 = _degToRad(a.latitude);
     final lat2 = _degToRad(b.latitude);
@@ -67,16 +67,16 @@ class GeoMath {
     return normalizeDegrees(_radToDeg(math.atan2(y, x)));
   }
 
-  /// Normalises an angle to the range [0, 360).
+  
   static double normalizeDegrees(double deg) {
     final m = deg % 360.0;
     return m < 0 ? m + 360.0 : m;
   }
 
-  /// Smallest signed difference `target - source`, in the range (-180, 180].
-  ///
-  /// Positive => target is clockwise (to the right) of source.
-  /// Correctly handles the 0/360 wrap-around.
+  
+  
+  
+  
   static double signedAngularDifference(double source, double target) {
     var diff = (target - source) % 360.0;
     if (diff < -180.0) diff += 360.0;
@@ -84,12 +84,12 @@ class GeoMath {
     return diff;
   }
 
-  /// Absolute smallest difference between two angles, in [0, 180].
+  
   static double angularDistance(double a, double b) =>
       signedAngularDifference(a, b).abs();
 
-  /// Circular mean of a list of angles (degrees), returns value in [0, 360).
-  /// Returns null for an empty list. Robust to the 0/360 wrap-around.
+  
+  
   static double? circularMeanDegrees(List<double> anglesDeg) {
     if (anglesDeg.isEmpty) return null;
     var sumSin = 0.0;
@@ -103,13 +103,13 @@ class GeoMath {
     return normalizeDegrees(_radToDeg(math.atan2(sumSin, sumCos)));
   }
 
-  /// Projects [point] onto the polyline defined by [vertices].
-  ///
-  /// [cumulative] must contain the cumulative along-route distance at each
-  /// vertex (cumulative[0] == 0, length == vertices.length).
-  ///
-  /// Uses a local equirectangular (flat-earth) approximation in metres, which
-  /// is accurate at campus/walking scale.
+  
+  
+  
+  
+  
+  
+  
   static PolylineProjection projectOntoPolyline(
     GeoPoint point,
     List<GeoPoint> vertices,
@@ -140,7 +140,7 @@ class GeoMath {
     );
   }
 
-  /// Cumulative along-route distance at each vertex. cumulative[0] == 0.
+  
   static List<double> cumulativeDistances(List<GeoPoint> vertices) {
     final out = List<double>.filled(vertices.length, 0.0);
     for (var i = 1; i < vertices.length; i++) {
@@ -149,7 +149,7 @@ class GeoMath {
     return out;
   }
 
-  // Internal segment projection (local planar approximation).
+  
   static _SegmentProjection _projectOntoSegment(
     GeoPoint p,
     GeoPoint a,

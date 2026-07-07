@@ -8,10 +8,15 @@ import '../../mapbox_navigation/presentation/cubit/navigation_map_cubit.dart';
 import '../../obstacle_avoidance/application/obstacle_listener_service.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import 'developer_screen.dart';
+import 'recording_screen.dart';
 import 'user_screen.dart';
 
+/// Which top-level screen is shown.
+enum _Screen { user, developer, recording }
 
-
+/// Root screen. Hosts the shared streaming state and a toggle between the
+/// user-facing voice screen, the developer/debug screen, and the screen-
+/// recording view.
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key, required this.obstacleListener});
 
@@ -22,7 +27,7 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  bool _devMode = false;
+  _Screen _screen = _Screen.user;
   bool _streaming = false;
   bool _togglingStream = false;
   StreamSubscription<bool>? _streamingSub;
@@ -32,16 +37,16 @@ class _HomeShellState extends State<HomeShell> {
     super.initState();
     final voice = context.read<VoiceAssistantCubit>();
     voice.initialize();
-    
-    
+    // Greet the user on launch with the short how-to so they know how to
+    // interact (tap to talk, available commands).
     voice.playWelcome();
     _streaming = widget.obstacleListener.isStreaming;
-    
-    
+    // Keep the button in sync when detection is toggled by VOICE or stopped by
+    // a network drop.
     _streamingSub = widget.obstacleListener.streamingChanges.listen((on) {
       if (mounted) setState(() => _streaming = on);
     });
-    
+    // User screen does not need preview images.
     widget.obstacleListener.setPreviewsEnabled(false);
   }
 
@@ -51,10 +56,10 @@ class _HomeShellState extends State<HomeShell> {
     super.dispose();
   }
 
-  void _toggleScreen() {
-    setState(() => _devMode = !_devMode);
-    
-    widget.obstacleListener.setPreviewsEnabled(_devMode);
+  void _setScreen(_Screen screen) {
+    setState(() => _screen = screen);
+    // Only fetch model previews from the server while the dev screen is shown.
+    widget.obstacleListener.setPreviewsEnabled(screen == _Screen.developer);
   }
 
   Future<void> _toggleStreaming() async {
@@ -100,26 +105,48 @@ class _HomeShellState extends State<HomeShell> {
       create: (_) => sl<NavigationMapCubit>(),
       child: Scaffold(
         appBar: AppBar(
-          title:
-              Text(_devMode ? 'Developer (debug)' : 'SafeNav Voice Assistant'),
+          title: Text(switch (_screen) {
+            _Screen.developer => 'Developer (debug)',
+            _Screen.recording => 'Screen recording',
+            _Screen.user => 'SafeNav Voice Assistant',
+          }),
           actions: [
             IconButton(
-              tooltip: _devMode
+              tooltip: _screen == _Screen.recording
+                  ? 'Back to user view'
+                  : 'Switch to screen-recording view',
+              icon: Icon(_screen == _Screen.recording
+                  ? Icons.videocam_off
+                  : Icons.videocam),
+              onPressed: () => _setScreen(_screen == _Screen.recording
+                  ? _Screen.user
+                  : _Screen.recording),
+            ),
+            IconButton(
+              tooltip: _screen == _Screen.developer
                   ? 'Switch to user view'
                   : 'Switch to developer view',
-              icon: Icon(_devMode ? Icons.person : Icons.bug_report),
-              onPressed: _toggleScreen,
+              icon: Icon(
+                  _screen == _Screen.developer ? Icons.person : Icons.bug_report),
+              onPressed: () => _setScreen(_screen == _Screen.developer
+                  ? _Screen.user
+                  : _Screen.developer),
             ),
           ],
         ),
-        body: _devMode
-            ? DeveloperScreen(
-                listener: widget.obstacleListener,
-                streaming: _streaming,
-                busy: _togglingStream,
-                onToggleStreaming: _toggleStreaming,
-              )
-            : const UserScreen(),
+        body: switch (_screen) {
+          _Screen.developer => DeveloperScreen(
+              listener: widget.obstacleListener,
+              streaming: _streaming,
+              busy: _togglingStream,
+              onToggleStreaming: _toggleStreaming,
+            ),
+          _Screen.recording => RecordingScreen(
+              listener: widget.obstacleListener,
+              streaming: _streaming,
+            ),
+          _Screen.user => const UserScreen(),
+        },
       ),
     );
   }

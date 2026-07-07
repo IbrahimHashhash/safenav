@@ -5,17 +5,18 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../../core/services/gallery/gallery_saver.dart';
 import '../domain/entities/detection_result.dart';
+import 'free_zone_preview_renderer.dart';
 
-
+/// Metadata returned after a capture is persisted.
 class CaptureRecord {
   final int frameId;
   final String imagePath;
   final String csvPath;
 
-  
+  /// Number of model preview images saved alongside the frame.
   final int previewCount;
 
-  
+  /// Number of images (frame + previews) also saved to the device gallery.
   final int gallerySaved;
 
   const CaptureRecord({
@@ -29,11 +30,12 @@ class CaptureRecord {
   String get imageFileName => imagePath.split(Platform.pathSeparator).last;
 }
 
-
+/// CSV header for the capture log.
 const String captureCsvHeader =
     'captured_at,frame_id,image_file,skipped,mad,end_to_end_ms,'
     'decode_ms,yolo_ms,depth_ms,sam_ms,stairs_ms,nav_ms,encode_ms,total_ms,'
-    'server_fps,instruction,obstacle_count,obstacles';
+    'server_fps,instruction,obstacle_count,obstacles,'
+    'free_zone_count,free_zones';
 
 String _num(num? v, [int? fractionDigits]) {
   if (v == null) return '';
@@ -47,6 +49,8 @@ String _csv(String s) {
   return s;
 }
 
+/// Builds one CSV row from a [DetectionResult]. Pure (no IO) so it is unit
+/// testable. Previews are intentionally NOT included.
 String buildCaptureCsvRow(
   DetectionResult r,
   DateTime capturedAt,
@@ -58,6 +62,14 @@ String buildCaptureCsvRow(
           '${o.label}:${o.confidence.toStringAsFixed(2)}:'
           '${o.distanceMeters?.toStringAsFixed(1) ?? "?"}')
       .join(';');
+
+  // Free zones as "name:free|blocked:clearance" entries, left-to-right.
+  final freeZones = <String>[
+    for (var i = 0; i < r.freeZones.length; i++)
+      '${r.freeZones[i].label ?? 'R${i + 1}'}:'
+          '${r.freeZones[i].free ? 'free' : 'blocked'}:'
+          '${r.freeZones[i].clearanceM?.toStringAsFixed(1) ?? '?'}',
+  ].join(';');
 
   final fields = <String>[
     capturedAt.toIso8601String(),
@@ -78,16 +90,30 @@ String buildCaptureCsvRow(
     _csv(r.instruction),
     '${r.obstacles.length}',
     _csv(obstacles),
+    '${r.freeZones.length}',
+    _csv(freeZones),
   ];
   return fields.join(',');
 }
 
+/// Persists captured frames (the JPEG itself plus the model preview images,
+/// when present) and their metrics to a CSV in the app documents directory,
+/// for later inspection.
 class CaptureLogService {
-  CaptureLogService({this.gallery});
+  CaptureLogService({this.gallery, this.freeZoneRenderer});
 
-  CaptureLogService.forDirectory(Directory dir, {this.gallery}) : _dir = dir;
+  /// Test seam: use a fixed directory instead of the platform documents dir.
+  CaptureLogService.forDirectory(Directory dir,
+      {this.gallery, this.freeZoneRenderer})
+      : _dir = dir;
 
+  /// Optional gallery saver; when set, captures are also copied to the device
+  /// gallery so they are viewable in the Photos app.
   final GallerySaver? gallery;
+
+  /// Optional renderer that turns the free-zone JSON into a preview image so it
+  /// can be saved with the other previews. Null in tests / when unavailable.
+  final FreeZonePreviewRenderer? freeZoneRenderer;
 
   Directory? _dir;
 
@@ -102,12 +128,17 @@ class CaptureLogService {
     return dir;
   }
 
+  /// Absolute path of the captures directory (for showing the user).
   Future<String> directoryPath() async => (await _ensureDir()).path;
 
+  /// Absolute path of the CSV log file.
   Future<String> csvPath() async => '${(await _ensureDir()).path}/captures.csv';
 
+  /// Whether the CSV log exists yet (i.e. at least one capture was saved).
   Future<bool> csvExists() async => File(await csvPath()).exists();
 
+  /// Saves the frame JPEG, any attached model previews, and appends a metrics
+  /// row to `captures.csv`.
   Future<CaptureRecord> save({
     required Uint8List frameJpeg,
     required DetectionResult result,
@@ -131,11 +162,13 @@ class CaptureLogService {
         await gallery!.saveImage(bytes, name: name);
         gallerySaved++;
       } catch (_) {
+        // Gallery save is best-effort; the local file copy already succeeded.
       }
     }
 
     await toGallery(base, frameJpeg);
 
+    // Save whatever model previews came back with this frame.
     var previewCount = 0;
     Future<void> writePreview(String suffix, Uint8List? bytes, String ext) async {
       if (bytes == null || bytes.isEmpty) return;
@@ -149,6 +182,21 @@ class CaptureLogService {
     await writePreview('depth', result.depthPreview, 'jpg');
     await writePreview('seg', result.segPreview, 'jpg');
     await writePreview('mask', result.maskPreview, 'png');
+
+    // The server doesn't return a free-zone image; render one from the JSON
+    // (over the captured frame) so it is saved with the other previews and in
+    // the gallery album. Best-effort.
+    if (freeZoneRenderer != null && result.freeZones.isNotEmpty) {
+      try {
+        final fzBytes = await freeZoneRenderer!.render(
+          zones: result.freeZones,
+          background: frameJpeg,
+        );
+        await writePreview('freezones', fzBytes, 'png');
+      } catch (_) {
+        // Rendering is best-effort; never block the capture.
+      }
+    }
 
     final csv = File('${dir.path}/captures.csv');
     if (!await csv.exists()) {

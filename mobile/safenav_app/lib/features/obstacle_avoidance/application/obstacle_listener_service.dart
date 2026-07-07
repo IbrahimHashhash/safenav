@@ -68,6 +68,7 @@ class ObstacleListenerService implements DetectionController {
   StreamSubscription<DetectionResult>? _subscription;
   bool _running = false;
   bool _previewsEnabled = false;
+  bool _hqPreviews = false;
   int _frameId = 0;
 
   // Backpressure: at most one streamed frame in flight at a time.
@@ -129,6 +130,11 @@ class ObstacleListenerService implements DetectionController {
   Future<void> stopDetection() => stop();
 
   void setPreviewsEnabled(bool enabled) => _previewsEnabled = enabled;
+
+  /// When true, on-demand single-frame captures request HIGH-QUALITY previews
+  /// from the server. Applies to explicit captures only (saved to device), not
+  /// to routine streaming frames — HQ JPEGs are large (~0.5–3.6 MB each).
+  void setHighQualityPreviews(bool enabled) => _hqPreviews = enabled;
 
   void _emitStreaming(bool value) {
     if (!_streamingController.isClosed) _streamingController.add(value);
@@ -209,7 +215,9 @@ class ObstacleListenerService implements DetectionController {
     _captureBytes[id] = jpeg;
     _lastFrameJpeg = jpeg;
     // Always request previews for a capture so they can be saved with the frame.
-    datasource.sendFrame(jpeg, id, includePreviews: true);
+    // This is the single-frame (non-streaming) path, so honour the HQ toggle.
+    datasource.sendFrame(jpeg, id,
+        includePreviews: true, highQuality: _hqPreviews);
     return null;
   }
 
@@ -256,11 +264,14 @@ class ObstacleListenerService implements DetectionController {
         _responseWaiter = waiter;
 
         // Request previews when the dev screen wants them, or when this frame
-        // is being captured (so its previews are saved with it).
+        // is being captured (so its previews are saved with it). HQ is applied
+        // ONLY to the captured frame being saved — never routine streaming
+        // frames (those JPEGs would be far too large at the stream rate).
         datasource.sendFrame(
           jpeg,
           id,
           includePreviews: _previewsEnabled || saveThisFrame,
+          highQuality: _hqPreviews && saveThisFrame,
         );
 
         await waiter.future.timeout(_responseTimeout, onTimeout: () {});

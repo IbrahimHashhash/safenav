@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:safenav_app/core/services/gallery/gallery_saver.dart';
 import 'package:safenav_app/features/obstacle_avoidance/data/capture_log_service.dart';
+import 'package:safenav_app/features/obstacle_avoidance/data/free_zone_preview_renderer.dart';
 import 'package:safenav_app/features/obstacle_avoidance/domain/entities/detection_result.dart';
 
 class _FakeGallery implements GallerySaver {
@@ -11,6 +12,21 @@ class _FakeGallery implements GallerySaver {
   @override
   Future<void> saveImage(Uint8List bytes, {required String name}) async {
     names.add(name);
+  }
+}
+
+/// Fake renderer that returns fixed bytes only when zones are present, so the
+/// save() path can be tested without the Flutter engine.
+class _FakeFreeZoneRenderer implements FreeZonePreviewRenderer {
+  int calls = 0;
+  @override
+  Future<Uint8List?> render({
+    required List<FreeZone> zones,
+    Uint8List? background,
+  }) async {
+    calls++;
+    if (zones.isEmpty) return null;
+    return Uint8List.fromList([9, 9, 9]);
   }
 }
 
@@ -70,6 +86,24 @@ void main() {
       final row = buildCaptureCsvRow(r, capturedAt, 'f.jpg');
       expect(row.startsWith('2026-06-19T13:00:00.000Z,2,f.jpg,false,,'), isTrue);
     });
+
+    test('serializes free zones (name:state:clearance) and the count', () {
+      final r = DetectionResult.fromJson({
+        'frame_id': 3,
+        'instruction': 'ok',
+        'free_zones': {
+          'left': {'clear': false, 'clearance_m': 0.9},
+          'centre': {'clear': true, 'clearance_m': 3.2},
+          'right': {'clear': true, 'clearance_m': 4.0},
+        },
+      });
+      final row = buildCaptureCsvRow(r, capturedAt, 'f.jpg');
+      final cols = row.split(',');
+      // Row and header still line up (the free_zones field has no commas).
+      expect(cols.length, captureCsvHeader.split(',').length);
+      // free_zone_count then the serialized zones.
+      expect(row, contains(',3,Left:blocked:0.9;Centre:free:3.2;Right:free:4.0'));
+    });
   });
 
   group('CaptureLogService preview saving', () {
@@ -119,6 +153,64 @@ void main() {
         result: r,
         capturedAt: DateTime.utc(2026, 6, 20, 16, 0, 0),
       );
+      expect(record.previewCount, 0);
+    });
+
+    test('renders and saves a free-zone preview (file + gallery) when zones '
+        'are present and a renderer is set', () async {
+      final dir = await Directory.systemTemp.createTemp('safenav_cap_fz');
+      addTearDown(() => dir.delete(recursive: true));
+      final fakeGallery = _FakeGallery();
+      final renderer = _FakeFreeZoneRenderer();
+
+      final r = DetectionResult.fromJson({
+        'frame_id': 11,
+        'instruction': 'ok',
+        'free_zones': {
+          'left': {'clear': false, 'clearance_m': 1.0},
+          'right': {'clear': true, 'clearance_m': 3.0},
+        },
+      });
+
+      final record = await CaptureLogService.forDirectory(
+        dir,
+        gallery: fakeGallery,
+        freeZoneRenderer: renderer,
+      ).save(
+        frameJpeg: Uint8List.fromList([0, 0]),
+        result: r,
+        capturedAt: DateTime.utc(2026, 6, 20, 16, 0, 0),
+      );
+
+      expect(renderer.calls, 1);
+      // free-zone preview counts as a preview.
+      expect(record.previewCount, 1);
+      final names = dir
+          .listSync()
+          .map((e) => e.path.split(Platform.pathSeparator).last)
+          .toList();
+      expect(names.any((n) => n.endsWith('_freezones.png')), isTrue);
+      // frame + freezones = 2 sent to the gallery.
+      expect(record.gallerySaved, 2);
+      expect(fakeGallery.names.any((n) => n.endsWith('_freezones')), isTrue);
+    });
+
+    test('does not render a free-zone preview when there are no zones',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('safenav_cap_fz2');
+      addTearDown(() => dir.delete(recursive: true));
+      final renderer = _FakeFreeZoneRenderer();
+      final r = DetectionResult.fromJson({'frame_id': 12, 'instruction': 'ok'});
+      final record = await CaptureLogService.forDirectory(
+        dir,
+        freeZoneRenderer: renderer,
+      ).save(
+        frameJpeg: Uint8List.fromList([0]),
+        result: r,
+        capturedAt: DateTime.utc(2026, 6, 20, 16, 0, 0),
+      );
+      // Renderer is not even called when there are no zones.
+      expect(renderer.calls, 0);
       expect(record.previewCount, 0);
     });
 

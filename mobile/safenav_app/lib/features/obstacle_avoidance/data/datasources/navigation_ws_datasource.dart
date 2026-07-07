@@ -11,7 +11,7 @@ import '../../domain/entities/detection_result.dart';
 /// Wire protocol (see server.py):
 ///   Client -> server (binary frame):
 ///     [0:4]  uint32 BE frame_id
-///     [4]    uint8  flags  (bit 0 = request previews; enables ALL previews)
+///     [4]    uint8  flags  (bit 0 = request previews; bit 1 = high quality)
 ///     [5:]   raw JPEG bytes
 ///   Server -> client (text): JSON response. We parse the full result.
 ///   Server -> client (binary, only if previews were requested): one message
@@ -32,6 +32,10 @@ class NavigationWebSocketDatasource {
   static const int _segFlag = 0x02;
   static const int _yoloFlag = 0x04;
   static const int _maskFlag = 0x08;
+
+  /// Request-direction flag (header byte 4): ask the server for HIGH-QUALITY
+  /// preview JPEGs. Independent of the response-direction preview flags above.
+  static const int _reqHqFlag = 0x02;
 
   /// Results awaiting their preview attachments, keyed by frame_id.
   final Map<int, DetectionResult> _pending = {};
@@ -75,11 +79,14 @@ class NavigationWebSocketDatasource {
   }
 
   /// Sends one camera frame. Set [includePreviews] to receive the model
-  /// preview images back (used by the developer screen).
+  /// preview images back (used by the developer screen). Set [highQuality] to
+  /// ask the server for full-resolution preview JPEGs — large (~0.5–3.6 MB
+  /// each), so only for on-demand single-frame captures over a good LAN.
   void sendFrame(
     Uint8List jpeg,
     int frameId, {
     bool includePreviews = false,
+    bool highQuality = false,
   }) {
     final channel = _channel;
     if (!_connected || channel == null || jpeg.isEmpty) return;
@@ -87,7 +94,9 @@ class NavigationWebSocketDatasource {
     final packet = Uint8List(_headerSize + jpeg.length);
     final header = ByteData.view(packet.buffer, 0, _headerSize);
     header.setUint32(0, frameId & 0xFFFFFFFF, Endian.big);
-    header.setUint8(4, includePreviews ? _depthFlag : 0x00);
+    var flags = includePreviews ? _depthFlag : 0x00;
+    if (highQuality) flags |= _reqHqFlag;
+    header.setUint8(4, flags);
     packet.setRange(_headerSize, packet.length, jpeg);
 
     _sentAt[frameId] = DateTime.now();
@@ -205,31 +214,18 @@ class NavigationWebSocketDatasource {
     _controller = null;
   }
 
-  /// Builds the navigation WebSocket URL from the configured base URL,
-  /// tolerating whatever form `OBSTACLE_API_URL` is given in:
-  ///   `http://host:8000`            -> `ws://host:8000/ws/navigation`
-  ///   `https://host`                -> `wss://host/ws/navigation`
-  ///   `ws://host:8000`              -> `ws://host:8000/ws/navigation`
-  ///   `ws://host:8000/ws/navigation`-> unchanged (path not duplicated)
+  /// Resolves the WebSocket URL from the configured base URL, normalising only
+  /// the scheme (http -> ws, https -> wss). The URL is used as-is otherwise —
+  /// `OBSTACLE_API_URL` is expected to already include the full endpoint path
+  /// (e.g. `ws://host:8000/ws/navigation`).
   static String _toWsUrl(String baseUrl) {
-    var url = baseUrl.trim();
+    final url = baseUrl.trim();
 
-    // Normalise scheme to ws/wss (leave ws/wss as-is).
     if (url.startsWith('https://')) {
-      url = 'wss://${url.substring('https://'.length)}';
-    } else if (url.startsWith('http://')) {
-      url = 'ws://${url.substring('http://'.length)}';
+      return 'wss://${url.substring('https://'.length)}';
     }
-
-    // Drop any trailing slash(es).
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-
-    // Append the endpoint path only if it is not already there.
-    const path = '/ws/navigation';
-    if (!url.endsWith(path)) {
-      url = '$url$path';
+    if (url.startsWith('http://')) {
+      return 'ws://${url.substring('http://'.length)}';
     }
     return url;
   }

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../shared/widgets/caption_card.dart';
@@ -17,6 +19,19 @@ import '../../voice_interaction/presentation/cubit/voice_assistant_cubit.dart';
 import '../../voice_interaction/presentation/cubit/voice_assistant_state.dart';
 
 enum _ModelPreview { yolo, depth, freeZone }
+
+/// Which developer layout is shown: the full debug screen, the obstacle
+/// detection test-recording view, or the GPS navigation recording view.
+enum _DevView { full, detection, gps }
+
+/// One recorded per-frame latency sample (frame id + client end-to-end ms).
+class _LatencySample {
+  final int frameId;
+  final double? endToEndMs;
+  final bool skipped;
+  final DateTime at;
+  const _LatencySample(this.frameId, this.endToEndMs, this.skipped, this.at);
+}
 
 /// Developer/debug screen: live camera preview, the navigation map with the
 /// current coordinates, a caption of the last spoken instruction (navigation
@@ -53,6 +68,15 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   String? _capturesDir;
   NavProvider _navProvider = NavProvider.mapbox;
   late final WalkingSpeedTracker _speed;
+  bool _hqPreviews = false;
+  _DevView _view = _DevView.full;
+  // True when this screen started the camera just for the GPS scene preview
+  // (so we release it on leave/dispose, but never while streaming owns it).
+  bool _camPreviewStartedByMe = false;
+
+  // Per-frame latency recording (frame id + client end-to-end ms) for export.
+  bool _recordingLatency = false;
+  final List<_LatencySample> _latencySamples = [];
 
   // Last successfully received preview per model. Kept across skipped frames
   // (a skipped frame carries no previews) so the image never blanks out.
@@ -66,6 +90,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     _cachePreviews(_result);
     _sub = widget.listener.results.listen((r) {
       if (!mounted) return;
+      if (_recordingLatency) {
+        _latencySamples.add(
+          _LatencySample(r.frameId, r.endToEndMs, r.skipped, DateTime.now()),
+        );
+      }
       setState(() {
         _result = r;
         _cachePreviews(r);
@@ -104,6 +133,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     _sub?.cancel();
     _captureSub?.cancel();
     _speed.stop();
+    // Release the camera only if we started it for the GPS preview and the
+    // streaming pipeline isn't using it.
+    if (_camPreviewStartedByMe && !widget.streaming) {
+      widget.listener.cameraSource.dispose();
+    }
     super.dispose();
   }
 
@@ -119,6 +153,51 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     }
     final path = await log.csvPath();
     await Share.shareXFiles([XFile(path)], text: 'SafeNav capture log');
+  }
+
+  void _toggleLatencyRecording() {
+    setState(() {
+      _recordingLatency = !_recordingLatency;
+      if (_recordingLatency) _latencySamples.clear();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_recordingLatency
+            ? 'Recording per-frame latency…'
+            : 'Stopped. ${_latencySamples.length} frames recorded.'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _exportLatencyCsv() async {
+    if (_latencySamples.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No latency samples recorded yet.')),
+      );
+      return;
+    }
+    final buf = StringBuffer('index,frame_id,end_to_end_ms,skipped,timestamp\n');
+    for (var i = 0; i < _latencySamples.length; i++) {
+      final s = _latencySamples[i];
+      buf.writeln('$i,${s.frameId},${s.endToEndMs?.toStringAsFixed(2) ?? ''},'
+          '${s.skipped},${s.at.toIso8601String()}');
+    }
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/latency_${DateTime.now().millisecondsSinceEpoch}.csv');
+      await file.writeAsString(buf.toString(), flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'SafeNav per-frame latency (${_latencySamples.length} frames)',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to export latency CSV: $e')),
+      );
+    }
   }
 
   Future<void> _onCapture() async {
@@ -163,6 +242,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              _viewToggle(),
+              const SizedBox(height: 12),
+              if (_view == _DevView.detection)
+                _testRecordingView()
+              else if (_view == _DevView.gps)
+                _gpsRecordingView()
+              else ...[
               Row(
                 children: [
                   Expanded(
@@ -217,6 +303,8 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              _hqPreviewsToggle(),
               const SizedBox(height: 12),
 
               _statusStrip(),
@@ -296,7 +384,443 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
                 title: 'Performance metrics',
                 child: _metrics(),
               ),
+              ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- View toggle (full dev vs. compact test-recording layout) ------------
+
+  Widget _viewToggle() {
+    return SegmentedButton<_DevView>(
+      segments: const [
+        ButtonSegment(
+          value: _DevView.full,
+          label: Text('Full'),
+          icon: Icon(Icons.dashboard_customize),
+        ),
+        ButtonSegment(
+          value: _DevView.detection,
+          label: Text('Detect'),
+          icon: Icon(Icons.fiber_manual_record),
+        ),
+        ButtonSegment(
+          value: _DevView.gps,
+          label: Text('GPS'),
+          icon: Icon(Icons.navigation),
+        ),
+      ],
+      selected: {_view},
+      showSelectedIcon: false,
+      onSelectionChanged: (s) => _setView(s.first),
+    );
+  }
+
+  void _setView(_DevView view) {
+    final leavingGps = _view == _DevView.gps && view != _DevView.gps;
+    setState(() => _view = view);
+    if (view == _DevView.gps) {
+      _ensureCameraPreview();
+    } else if (leavingGps) {
+      _releaseCameraPreviewIfMine();
+    }
+  }
+
+  /// Turns the camera on for the GPS scene preview WITHOUT streaming to the
+  /// server. No-op if streaming already owns the camera.
+  Future<void> _ensureCameraPreview() async {
+    final cam = widget.listener.cameraSource;
+    if (cam.isReady) return;
+    final ok = await cam.initialize();
+    if (ok) _camPreviewStartedByMe = true;
+    if (mounted) setState(() {});
+  }
+
+  /// Releases the camera only if this screen started it and streaming isn't
+  /// using it.
+  Future<void> _releaseCameraPreviewIfMine() async {
+    if (_camPreviewStartedByMe && !widget.streaming) {
+      _camPreviewStartedByMe = false;
+      await widget.listener.cameraSource.dispose();
+      if (mounted) setState(() {});
+    }
+  }
+
+  // --- GPS navigation recording view ---------------------------------------
+
+  /// One-screen layout for recording GPS navigation: the camera scene (not
+  /// streamed to the server), the live map with route, the moving orientation
+  /// cursor, and the spoken navigation instruction.
+  Widget _gpsRecordingView() {
+    final h = MediaQuery.of(context).size.height;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _compactInstruction(),
+        const SizedBox(height: 8),
+        _scenePreview(h * 0.26),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: h * 0.42,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: const NavigationMapView(showCoordinates: true),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Live camera preview for the scene only (no frames sent to the server).
+  Widget _scenePreview(double height) {
+    final cam = widget.listener.cameraSource;
+    final ready = cam.isReady && cam.previewSize != null;
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ready
+            ? FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: cam.previewSize!.height,
+                  height: cam.previewSize!.width,
+                  child: cam.buildPreview(),
+                ),
+              )
+            : Container(
+                color: Colors.white10,
+                alignment: Alignment.center,
+                child: const Text(
+                  'Starting camera…',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+      ),
+    );
+  }
+
+  /// Compact, single-screen layout for recording test runs: the delivered
+  /// instruction, the key metrics, the camera preview (YOLO boxes from the
+  /// server) with a very faded free-zone band, and per-region clearance cards.
+  Widget _testRecordingView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _compactInstruction(),
+        const SizedBox(height: 8),
+        _compactHighestPriority(),
+        const SizedBox(height: 8),
+        _compactMetrics(),
+        const SizedBox(height: 8),
+        _latencyRecorderControls(),
+        const SizedBox(height: 8),
+        _yoloWithFadedBand(),
+        _clearanceCards(),
+      ],
+    );
+  }
+
+  /// Record/export controls for per-frame latency. Records frame_id +
+  /// end-to-end latency for every frame while streaming, then exports a CSV.
+  Widget _latencyRecorderControls() {
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _toggleLatencyRecording,
+            icon: Icon(
+              _recordingLatency
+                  ? Icons.stop_circle
+                  : Icons.fiber_manual_record,
+              size: 18,
+              color: _recordingLatency ? Colors.redAccent : Colors.white70,
+            ),
+            label: Text(
+              _recordingLatency
+                  ? 'Stop (${_latencySamples.length})'
+                  : 'Record latency',
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        OutlinedButton.icon(
+          onPressed: _latencySamples.isEmpty ? null : _exportLatencyCsv,
+          icon: const Icon(Icons.ios_share, size: 18),
+          label: const Text('CSV'),
+        ),
+      ],
+    );
+  }
+
+  /// Compact row for the highest-priority detected obstacle: label, confidence
+  /// and (calibrated) distance.
+  Widget _compactHighestPriority() {
+    final r = _result;
+    final hp = r?.highestPriority;
+    final conf =
+        hp != null ? '${(hp.confidence * 100).toStringAsFixed(0)}%' : '—';
+    final distValue = hp?.distanceMeters ?? r?.primaryDistanceMeters();
+    final dist = distValue != null ? '${distValue.toStringAsFixed(1)} m' : '—';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orangeAccent.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.report, size: 16, color: Colors.orangeAccent),
+          const SizedBox(width: 8),
+          const Text(
+            'TOP OBSTACLE',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              hp == null ? 'none (depth-only)' : hp.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+            ),
+          ),
+          _miniChip(conf),
+          const SizedBox(width: 6),
+          _miniChip(dist, color: Colors.cyanAccent),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniChip(String text, {Color color = Colors.white}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  /// Compact one/two-line delivered-instruction strip for the test view.
+  Widget _compactInstruction() {
+    final text = _lastSpoken.isEmpty ? '—' : _lastSpoken;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _accent.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.record_voice_over, size: 16, color: _accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Small 3-up metric tiles (frame id, status, latency, MAD, fps, server ms)
+  /// so the whole test view fits on one screen.
+  Widget _compactMetrics() {
+    final r = _result;
+    final skipped = r?.skipped == true;
+    final tiles = <Widget>[
+      _miniStat('Frame', r != null ? '#${r.frameId}' : '—'),
+      _miniStat(
+        'Status',
+        r == null ? '—' : (skipped ? 'Skipped' : 'Processed'),
+        color: r == null
+            ? Colors.white
+            : (skipped ? Colors.orangeAccent : Colors.lightGreenAccent),
+      ),
+      _miniStat(
+        'End-to-end',
+        r?.endToEndMs != null ? '${r!.endToEndMs!.toStringAsFixed(0)} ms' : '—',
+        color: Colors.amberAccent,
+      ),
+      _miniStat('MAD', r?.mad != null ? r!.mad!.toStringAsFixed(2) : '—'),
+      _miniStat(
+        'Server FPS',
+        r?.metrics.serverFps != null
+            ? r!.metrics.serverFps!.toStringAsFixed(1)
+            : '—',
+      ),
+      _miniStat(
+        'Server ms',
+        r?.metrics.totalMs != null
+            ? r!.metrics.totalMs!.toStringAsFixed(0)
+            : '—',
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = (constraints.maxWidth - 2 * 8) / 3;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [for (final t in tiles) SizedBox(width: width, child: t)],
+        );
+      },
+    );
+  }
+
+  Widget _miniStat(String label, String value, {Color color = Colors.white}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The server's YOLO preview (with bounding boxes) as the camera image, with
+  /// the free-zone band drawn very faded on top so both are visible at once.
+  Widget _yoloWithFadedBand() {
+    final bytes = _lastYolo;
+    final zones = _result?.freeZones ?? const <FreeZone>[];
+    final skipped = _result?.skipped == true;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.36,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (bytes != null)
+            Image.memory(bytes, gaplessPlayback: true, fit: BoxFit.contain)
+          else if (widget.streaming)
+            const Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+            )
+          else
+            const Center(
+              child: Text(
+                'Start streaming to see the preview',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          if (zones.isNotEmpty)
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final h = constraints.maxHeight;
+                  // Same horizon-centred band as the server's analysis.
+                  return Padding(
+                    padding: EdgeInsets.only(top: h * 0.10, bottom: h * 0.28),
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < zones.length; i++)
+                          Expanded(
+                            child: _fadedRegionCell(zones[i], i, zones.length),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          Positioned(
+            left: 8,
+            top: 8,
+            child: _badge(
+              skipped ? 'Skipped · last frame' : 'YOLO + free-zones',
+              skipped ? Colors.orangeAccent : _accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A single, very faded free-zone band cell for the test-recording overlay.
+  Widget _fadedRegionCell(FreeZone zone, int index, int count) {
+    final color = zone.free ? Colors.green : Colors.red;
+    return Container(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16), // very faded so the frame shows
+        border: Border(
+          right: index < count - 1
+              ? BorderSide(color: Colors.white.withValues(alpha: 0.18))
+              : BorderSide.none,
+        ),
+      ),
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          zone.label ?? 'R${index + 1}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            shadows: [Shadow(blurRadius: 2, color: Colors.black)],
           ),
         ),
       ),
@@ -512,6 +1036,38 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           },
         );
       },
+    );
+  }
+
+  // --- High-quality previews toggle ----------------------------------------
+
+  Widget _hqPreviewsToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: SwitchListTile.adaptive(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        value: _hqPreviews,
+        activeThumbColor: _accent,
+        onChanged: (v) {
+          setState(() => _hqPreviews = v);
+          widget.listener.setHighQualityPreviews(v);
+        },
+        secondary: const Icon(Icons.high_quality, color: Colors.white70),
+        title: const Text(
+          'High quality previews',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        subtitle: const Text(
+          'Captured frames only · large files · use on a good LAN',
+          style: TextStyle(color: Colors.white54, fontSize: 11),
+        ),
+      ),
     );
   }
 

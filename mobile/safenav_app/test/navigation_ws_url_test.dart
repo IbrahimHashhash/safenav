@@ -6,27 +6,23 @@ void main() {
     String urlFor(String base) =>
         NavigationWebSocketDatasource(baseUrl: base).url;
 
-    test('appends the path to a bare http host', () {
-      expect(urlFor('http://192.168.1.109:8000'),
+    test('converts http to ws and keeps the URL as-is otherwise', () {
+      expect(urlFor('http://192.168.1.109:8000/ws/navigation'),
           'ws://192.168.1.109:8000/ws/navigation');
     });
 
     test('converts https to wss', () {
-      expect(urlFor('https://example.com'), 'wss://example.com/ws/navigation');
+      expect(urlFor('https://example.com/ws/navigation'),
+          'wss://example.com/ws/navigation');
     });
 
-    test('does NOT duplicate the path when already present', () {
+    test('leaves a ws:// URL unchanged', () {
       expect(urlFor('ws://176.119.254.184:8000/ws/navigation'),
           'ws://176.119.254.184:8000/ws/navigation');
     });
 
-    test('handles http with the path already included', () {
-      expect(urlFor('http://host:8000/ws/navigation'),
-          'ws://host:8000/ws/navigation');
-    });
-
-    test('trims a trailing slash', () {
-      expect(urlFor('http://host:8000/'), 'ws://host:8000/ws/navigation');
+    test('does NOT append a path (URL is used as given)', () {
+      expect(urlFor('http://host:8000'), 'ws://host:8000');
     });
   });
 }

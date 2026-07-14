@@ -1,40 +1,19 @@
 """
-api/server.py
-=============
-FastAPI server that runs the YOLOv11 + Depth-Anything-V2 pipeline live over a
-WebSocket and emits navigation instructions for the SafeNav client.
+api/server.py — FastAPI server for SafeNav obstacle avoidance.
 
-Wire protocol
--------------
-Client -> server (preferred, binary frame):
-    [0:4]   uint32 BE frame_id
-    [4]     uint8 flags  (bit 0 = return preview images; bit 1 = high quality:
-                          full-resolution previews, no downscale)
-    [5:]    raw JPEG bytes of the camera frame
+Runs YOLO + Depth-Anything-V2 on each camera frame received over WebSocket
+and returns a navigation instruction + obstacle data to the client.
 
-Client -> server (legacy, text frame):
-    JSON  {"frame_id": int, "include_depth": bool, "hq": bool, "frame": <base64 JPEG>}
+Wire protocol (client -> server):
+    Binary: [4B frame_id][1B flags][JPEG bytes]
 
-Server -> client (always):
-    text JSON response (see :data:`RESPONSE_SCHEMA_DOC`).
-
-Server -> client (when include_depth is true):
-    up to three binary preview messages, each prefixed by
-    [0:4]   uint32 BE frame_id
-    [4]     uint8 flags  (bit 0 = depth, bit 1 = SAM ground segmentation,
-                          bit 2 = YOLO detections, bit 3 = raw binary ground
-                          mask as PNG, bit 4 = free-zone overlay -- exactly one
-                          bit per message)
-    [5:]    JPEG bytes
-    Sent immediately after the JSON; correlate to the JSON via frame_id and
-    switch on the flags byte. Sending raw bytes avoids the ~33 % bandwidth and
-    the CPU cost of base64.
+Wire protocol (server -> client):
+    JSON response with instruction, obstacles, free_zones, metrics.
+    Optional binary preview messages (depth/YOLO/freezone) with same header format.
 """
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import json
 import logging
 import os
@@ -49,15 +28,13 @@ from logging.handlers import RotatingFileHandler
 import cv2
 import numpy as np
 import torch
-from PIL import Image
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 # project-local
-from models.sam_ground_segmenter import filter_ground_depth, save_debug
 from utils.navigation import (
-    init_tracker_state,
     run_detection_pipeline,
+    obstacle_patch_depth,
     _BAND_TOP_FRAC as NAV_BAND_TOP_FRAC,
     _BAND_BOTTOM_FRAC as NAV_BAND_BOTTOM_FRAC,
     _ZONE_NAMES as NAV_ZONE_NAMES,
@@ -67,65 +44,53 @@ from utils.navigation import (
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-DAV2_VARIANT     = os.environ.get("DAV2_VARIANT", "vitb")    # vits | vitb | vitl
+DAV2_VARIANT     = os.environ.get("DAV2_VARIANT", "vitb")
 DAV2_INPUT_SIZE  = int(os.environ.get("DAV2_INPUT_SIZE", 392))
-DAV2_MAX_DEPTH_M = 16 # float(os.environ.get("DAV2_MAX_DEPTH_M", 80.0))
+DAV2_MAX_DEPTH_M = 16
 
 YOLO_VARIANT     = os.environ.get("YOLO_VARIANT", "yolo11s")
 YOLO_INPUT_SIZE  = int(os.environ.get("YOLO_INPUT_SIZE", 512))
-YOLO_CONF        = float(os.environ.get("YOLO_CONF", 0.50)) # confidence score
+YOLO_CONF        = float(os.environ.get("YOLO_CONF", 0.50))
 
-# campus feedback #1: only these COCO classes are treated as obstacles.
-# Stairs come from the separate stairs detector; everything else is ignored.
+# only these COCO classes are treated as obstacles
 DETECTED_OBSTACLES_IDS = frozenset({
     0,   # person
     2,   # car
-    3,   # motorcycle
-    5,   # bus
+    # 3,   # motorcycle
+    # 5,   # bus
     13,  # bench
-    56,  # chair
-    60,  # dining table
+    # 56,  # chair
+    # 60,  # dining table
 })
 
-# Second YOLO specialised on stairs. The base yolo11s has no 'stairs' class, so
-# we keep ONLY this model's 'stairs' detections and merge them with the base
-# model's COCO detections (disjoint -> no cross-model NMS needed). It runs every
-# STAIRS_EVERY_N frames and the result is cached between runs to limit the extra
-# GPU cost (stairs are static structures, unlike fast-moving traffic).
-STAIRS_WEIGHTS    = os.environ.get("STAIRS_WEIGHTS", "stairs-detector")  # -> .pt
+# separate stairs detector (base YOLO has no stairs class)
+STAIRS_WEIGHTS    = os.environ.get("STAIRS_WEIGHTS", "stairs-detector")
 STAIRS_INPUT_SIZE = int(os.environ.get("STAIRS_INPUT_SIZE", YOLO_INPUT_SIZE))
-STAIRS_CONF       = float(os.environ.get("STAIRS_CONF", 0.35))  # safety-critical: favour recall
-STAIRS_CLASS      = os.environ.get("STAIRS_CLASS", "stairs")    # only this class is kept
-STAIRS_EVERY_N    = int(os.environ.get("STAIRS_EVERY_N", 3))    # run every N frames, cache between
+STAIRS_CONF       = float(os.environ.get("STAIRS_CONF", 0.3))
+STAIRS_CLASS      = os.environ.get("STAIRS_CLASS", "stairs")
 
-SAM_VARIANT      = os.environ.get("SAM_VARIANT", "small")   # tiny|small|base_plus|large
-SAM_DEBUG        = os.environ.get("SAM_DEBUG", "0") == "1"   # dump debug artefacts
-SAM_DEBUG_EVERY  = int(os.environ.get("SAM_DEBUG_EVERY", 60))  # ...every N frames
-
-# campus feedback #5: skip near-identical frames to save GPU. We compare a tiny
-# grayscale signature of each frame to the last PROCESSED one; if the mean
-# absolute difference is below FRAME_SKIP_MAD the frame is considered unchanged
-# and we reuse the previous result instead of re-running the models.
+# skip near-identical frames to save GPU
 FRAME_SKIP_ENABLED    = os.environ.get("FRAME_SKIP", "1") == "1"
-FRAME_SKIP_MAD        = float(os.environ.get("FRAME_SKIP_MAD", 20.0))  # 0-255 scale; previously it was 3.0
-FRAME_SKIP_MAX_CONSEC = int(os.environ.get("FRAME_SKIP_MAX_CONSEC", 30))  # force refresh
-FRAME_SIG_DIM         = 32       # signature is FRAME_SIG_DIM x FRAME_SIG_DIM gray
+FRAME_SKIP_MAD        = float(os.environ.get("FRAME_SKIP_MAD", 20.0))
+FRAME_SKIP_MAX_CONSEC = int(os.environ.get("FRAME_SKIP_MAX_CONSEC", 30))
+FRAME_SIG_DIM         = 32
 
-DEPTH_PREVIEW_MAX_DIM = 320      # resize depth preview before JPEG encoding
-DEPTH_PREVIEW_QUALITY = 70       # JPEG quality for downscaled previews
-HQ_PREVIEW_QUALITY = 95          # JPEG quality for high-quality (full-res) previews
-# request-flags byte (client -> server) bits:
-REQ_PREVIEWS_FLAG = 0x01         # bit 0 = send preview images back (== DEPTH_FLAG)
-REQ_HQ_FLAG       = 0x02         # bit 1 = previews at full resolution (no downscale)
-DEPTH_FLAG = 0x01                # bit 0 of flags byte = depth preview follows
-SEG_FLAG   = 0x02                # bit 1 = SAM ground-segmentation preview follows
-YOLO_FLAG  = 0x04                # bit 2 = YOLO detection preview follows
-MASK_FLAG  = 0x08                # bit 3 = raw binary ground mask (PNG) follows
-FREEZONE_FLAG = 0x10             # bit 4 = free-zone overlay preview (JPEG) follows
-HEADER_SIZE = 5                  # 4B frame_id + 1B flags
+DEPTH_PREVIEW_MAX_DIM = 320
+DEPTH_PREVIEW_QUALITY = 70
+HQ_PREVIEW_QUALITY = 95
 
-ROLLING_WINDOW = 30              # frames kept in the timing window
-LOG_EVERY_N_FRAMES = 30          # how often to flush a per-connection summary
+# binary message flags (client -> server request bits)
+REQ_PREVIEWS_FLAG = 0x01
+REQ_HQ_FLAG       = 0x02
+
+# binary message flags (server -> client preview type)
+DEPTH_FLAG = 0x01
+YOLO_FLAG  = 0x04
+FREEZONE_FLAG = 0x10
+HEADER_SIZE = 5  # 4B frame_id + 1B flags
+
+ROLLING_WINDOW = 30
+LOG_EVERY_N_FRAMES = 30
 SKIP_MODEL_LOAD = os.environ.get("SKIP_MODEL_LOAD", "0") == "1"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -134,9 +99,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 
-# --------------------------------------------------------------------------- #
 # Logging
-# --------------------------------------------------------------------------- #
 def _configure_logging() -> logging.Logger:
     """Set up file + console logging; safe to call multiple times."""
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -171,21 +134,18 @@ def _configure_logging() -> logging.Logger:
 log = _configure_logging()
 
 
-# --------------------------------------------------------------------------- #
 # Inference workers
-# --------------------------------------------------------------------------- #
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="infer")
 
 # Lazily filled in lifespan startup. None means "model not available".
-_yolo_detector = None    # type: ignore[var-annotated]
-_dav2_model = None       # type: ignore[var-annotated]
-_sam_segmenter = None    # type: ignore[var-annotated]
-_stairs_detector = None  # type: ignore[var-annotated]
+_yolo_detector = None    
+_dav2_model = None      
+_stairs_detector = None 
 
 
 def _load_models() -> None:
     """Load YOLO + DAV2 once at startup; failures are logged, not fatal."""
-    global _yolo_detector, _dav2_model, _sam_segmenter, _stairs_detector
+    global _yolo_detector, _dav2_model, _stairs_detector
 
     if SKIP_MODEL_LOAD:
         log.warning("SKIP_MODEL_LOAD=1 -- starting without inference models")
@@ -199,16 +159,16 @@ def _load_models() -> None:
         log.info("YOLO loaded (%s @ %dpx, device=%s)",
                  YOLO_VARIANT, YOLO_INPUT_SIZE, DEVICE)
     except Exception:
-        log.exception("Failed to load YOLO model -- /ws/navigation will return errors")
+        log.exception("Failed to load YOLO model -- /ws/avoidance will return errors")
         _yolo_detector = None
 
-    # Stairs YOLO (optional second detector; only its 'stairs' class is used).
+    # Stairs YOLO
     try:
         from models.yolo_detector import YOLODetector
         _stairs_detector = YOLODetector(variant=STAIRS_WEIGHTS, device=DEVICE)
         _stairs_detector.warm_up(input_size=STAIRS_INPUT_SIZE)
-        log.info("Stairs YOLO loaded (%s @ %dpx, class=%r, every %d frames)",
-                 STAIRS_WEIGHTS, STAIRS_INPUT_SIZE, STAIRS_CLASS, STAIRS_EVERY_N)
+        log.info("Stairs YOLO loaded (%s @ %dpx, class=%r)",
+                 STAIRS_WEIGHTS, STAIRS_INPUT_SIZE, STAIRS_CLASS)
     except Exception:
         log.exception("Failed to load stairs model -- stairs detection disabled")
         _stairs_detector = None
@@ -223,33 +183,16 @@ def _load_models() -> None:
         log.info("DAV2 loaded (%s @ %dpx, device=%s, fp16=%s)",
                  DAV2_VARIANT, DAV2_INPUT_SIZE, DEVICE, DEVICE == "cuda")
     except Exception:
-        log.exception("Failed to load DAV2 model -- /ws/navigation will return errors")
+        log.exception("Failed to load DAV2 model -- /ws/avoidance will return errors")
         _dav2_model = None
 
-    # SAM 2.1 ground segmenter -- DISABLED.
-    # Free-zone analysis now avoids the ground geometrically (a horizon-centred
-    # band in utils/navigation.py) instead of semantically. SAM was unreliable
-    # at ground in field testing and was the heaviest model in the pipeline, so
-    # it is left unloaded; _sam_segmenter stays None and every guarded SAM/
-    # ground-filter branch below becomes a no-op. To re-enable, uncomment this.
-    # try:
-    #     from models.sam_ground_segmenter import SAMGroundSegmenter
-    #     _sam_segmenter = SAMGroundSegmenter(variant=SAM_VARIANT, device=DEVICE)
-    #     log.info("SAM loaded (%s, device=%s)", SAM_VARIANT, DEVICE)
-    # except Exception:
-    #     log.exception("Failed to load SAM model -- ground filtering disabled")
-    #     _sam_segmenter = None
-    log.info("SAM ground segmenter disabled (free-zone uses geometric band)")
 
-
-# --------------------------------------------------------------------------- #
 # FastAPI app + lifespan
-# --------------------------------------------------------------------------- #
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     log.info("Server starting up (device=%s)", DEVICE)
     _load_models()
-    log.info("Server ready -- endpoints: /health, /ws/navigation")
+    log.info("Server ready -- endpoints: /health, /ws/avoidance")
     try:
         yield
     finally:
@@ -266,72 +209,30 @@ app.add_middleware(
 )
 
 
-# --------------------------------------------------------------------------- #
 # Frame decoding / encoding helpers
-# --------------------------------------------------------------------------- #
 def _decode_frame_message(message) -> dict:
-    """
-    Backward-compatible decoder.
-    Preferred path: binary websocket frame  ([4B frame_id][1B flags][JPEG]).
-    Legacy path:    JSON text with base64 payload.
-    """
-    # Starlette surfaces disconnects through receive() as a dict; surface it
-    # as the proper exception type so the websocket loop can clean up.
+    """Parse a binary WebSocket message into frame_id, flags, and JPEG bytes."""
+    # Starlette sometimes delivers disconnects as a dict instead of an exception
     if message.get("type") == "websocket.disconnect":
         raise WebSocketDisconnect(code=message.get("code", 1000))
 
     raw_bytes = message.get("bytes")
-    if raw_bytes is not None:
-        if len(raw_bytes) < HEADER_SIZE:
-            raise ValueError("Frame packet too small")
-        return {
-            "frame_id": int.from_bytes(raw_bytes[:4], "big"),
-            "include_depth": bool(raw_bytes[4] & DEPTH_FLAG),
-            "hq": bool(raw_bytes[4] & REQ_HQ_FLAG),
-            "frame_bytes": raw_bytes[HEADER_SIZE:],
-        }
-
-    raw_text = message.get("text")
-    if raw_text is None:
-        raise ValueError("Unsupported websocket message type")
-
-    payload = json.loads(raw_text)
+    if raw_bytes is None or len(raw_bytes) < HEADER_SIZE:
+        raise ValueError("Expected binary frame with at least 5 bytes")
     return {
-        "frame_id": int(payload.get("frame_id", 0)),
-        "include_depth": bool(payload.get("include_depth", False)),
-        "hq": bool(payload.get("hq", False)),
-        "frame_bytes": base64.b64decode(payload["frame"]),
+        "frame_id": int.from_bytes(raw_bytes[:4], "big"),
+        "include_depth": bool(raw_bytes[4] & DEPTH_FLAG),
+        "hq": bool(raw_bytes[4] & REQ_HQ_FLAG),
+        "frame_bytes": raw_bytes[HEADER_SIZE:],
     }
 
 
 def _decode_bgr_frame(frame_bytes: bytes) -> np.ndarray:
-    """JPEG bytes -> upright BGR np.ndarray.
-
-    OpenCV >= 4.x's ``cv2.imdecode`` already auto-applies the JPEG's EXIF
-    orientation, so phone frames (the camera layer tags them with EXIF) come out
-    upright on their own. Frames re-encoded by OpenCV in the bundled test
-    scripts carry NO EXIF tag; only for those do we keep the legacy 90° CW
-    rotation (the scripts ``--pre-rotate`` to match). Applying that rotation to
-    an already-EXIF-oriented phone frame is what turned the live feed 90°
-    sideways -- the cause of the garbage detections and constant "narrow path".
-    """
+    """JPEG bytes -> BGR numpy array."""
     arr = np.frombuffer(frame_bytes, np.uint8)
-    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)  # honours EXIF orientation
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if frame is None:
         raise ValueError("Invalid JPEG frame")
-
-    # Presence of an EXIF Orientation tag distinguishes a real camera JPEG
-    # (already oriented above) from an OpenCV-encoded one (no EXIF -> needs the
-    # legacy rotation). Reading EXIF is metadata-only, so it's cheap.
-    try:
-        has_exif_orientation = (
-            Image.open(io.BytesIO(frame_bytes)).getexif().get(0x0112) is not None
-        )
-    except Exception:
-        has_exif_orientation = False
-
-    if not has_exif_orientation:
-        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
     return frame
 
 
@@ -355,8 +256,7 @@ def _colorize_depth(depth: np.ndarray) -> np.ndarray:
 
 
 def _encode_preview_bgr(img: np.ndarray, hq: bool = False) -> bytes | None:
-    """JPEG-encode a BGR image. Downscales for bandwidth unless hq=True, in
-    which case the full original resolution is kept at high JPEG quality."""
+    """JPEG-encode a BGR image. Downscales unless hq=True."""
     if not hq:
         # downscale to keep bandwidth and encode time low
         h, w = img.shape[:2]
@@ -375,37 +275,18 @@ def _encode_depth_preview(depth: np.ndarray, hq: bool = False) -> bytes | None:
     return _encode_preview_bgr(_colorize_depth(depth), hq)
 
 
-def _encode_seg_preview(frame: np.ndarray, ground_mask: np.ndarray | None,
-                        hq: bool = False) -> bytes | None:
-    """Tint SAM's ground pixels red over the frame so the mask is verifiable."""
-    if ground_mask is None:
-        return None
-    overlay = frame.copy()
-    overlay[ground_mask] = (0, 0, 255)  # BGR red where SAM marked ground
-    blended = cv2.addWeighted(frame, 0.6, overlay, 0.4, 0.0)
-    return _encode_preview_bgr(blended, hq)
-
-
-# urgency -> BGR bounding-box colour for the YOLO preview.
-# Deep, legible colours (white label text reads well on these dark fills);
-# the old bright neon palette -- especially the bright yellow MEDIUM -- was too
-# harsh/high-contrast on the recordings.
+# urgency -> BGR box colour (dark so white text stays legible)
 _URGENCY_COLOR = {
-    "CRITICAL": (40, 40, 190),    # deep red
-    "HIGH":     (30, 90, 190),    # deep orange
-    "MEDIUM":   (150, 110, 30),   # deep teal-blue (was bright yellow)
-    "LOW":      (50, 120, 40),    # deep green
+    "CRITICAL": (0, 0, 150),     # dark red
+    "HIGH":     (0, 70, 150),    # dark orange
+    "MEDIUM":   (0, 100, 130),   # dark amber
+    "LOW":      (0, 110, 0),     # dark green
 }
 
 
 def _encode_yolo_preview(frame: np.ndarray, obstacles: list[dict],
                          hq: bool = False) -> bytes | None:
-    """Draw each pipeline obstacle: box + name + distance + confidence.
-
-    Drawn from the navigation obstacles (which carry the calibrated distance),
-    coloured by urgency. Font/box thickness scale with the frame height so the
-    labels stay legible at full (hq) resolution.
-    """
+    """Draw bounding boxes with label/distance/confidence on the frame."""
     vis = frame.copy()
     h = vis.shape[0]
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -416,7 +297,7 @@ def _encode_yolo_preview(frame: np.ndarray, obstacles: list[dict],
         if not bx:
             continue
         x1, y1, x2, y2 = (int(v) for v in bx[:4])
-        color = _URGENCY_COLOR.get(ob.get("urgency"), (50, 120, 40))
+        color = _URGENCY_COLOR.get(ob.get("urgency"), (0, 255, 0))
         cv2.rectangle(vis, (x1, y1), (x2, y2), color, th)
 
         dist = ob.get("distance_m")
@@ -425,7 +306,7 @@ def _encode_yolo_preview(frame: np.ndarray, obstacles: list[dict],
 
         (tw, tht), base = cv2.getTextSize(text, font, fs, th)
         y_text = y1 - 6 if (y1 - tht - base - 4) > 0 else y2 + tht + base + 4
-        # filled background so the label is readable over any scene
+        # filled background for readability
         cv2.rectangle(vis, (x1, y_text - tht - base),
                       (x1 + tw, y_text + base), color, -1)
         cv2.putText(vis, text, (x1, y_text), font, fs,
@@ -433,24 +314,9 @@ def _encode_yolo_preview(frame: np.ndarray, obstacles: list[dict],
     return _encode_preview_bgr(vis, hq)
 
 
-def _encode_mask_preview(ground_mask: np.ndarray | None) -> bytes | None:
-    """Encode the raw boolean ground mask as a full-res 1-channel PNG.
-
-    Unlike the visual previews this is NOT downscaled: clients (e.g. the video
-    annotator) need the exact mask to overlay at full resolution. A binary mask
-    compresses to only a few KB as PNG, so full-res is cheap.
-    """
-    if ground_mask is None:
-        return None
-    ok, buf = cv2.imencode(".png", ground_mask.astype(np.uint8) * 255)
-    return buf.tobytes() if ok else None
-
-
 def _encode_freezones_preview(frame: np.ndarray, free_zones: dict | None,
                               hq: bool = False) -> bytes | None:
-    """Draw the 5 free-zone lanes + horizon band over the frame so the depth-only
-    free-zone analysis can be inspected (green = clear/walkable, red = blocked;
-    each lane labelled with its calibrated clearance in metres)."""
+    """Draw the 5 free-zone lanes over the frame (green = clear, red = blocked)."""
     if not free_zones:
         return None
     vis = frame.copy()
@@ -478,36 +344,13 @@ def _encode_freezones_preview(frame: np.ndarray, free_zones: dict | None,
     return _encode_preview_bgr(vis, hq)
 
 
-# --------------------------------------------------------------------------- #
-# Inference wrappers (each returns elapsed_ms so we can log timings)
-# --------------------------------------------------------------------------- #
-_CLASS_COLORS = (
-    "#FF5733", "#33A1FF", "#FF33A8", "#33FF57", "#FFD433",
-    "#A833FF", "#FF8C33", "#33FFF5", "#FF3380", "#80FF33",
-    "#FF33D4", "#33FFAA", "#FFB533", "#3380FF", "#FF3355",
-    "#33FFD4", "#FFE033", "#5533FF", "#FF6633", "#33FF80",
-)
-
-
-def _class_color(class_id: int) -> str:
-    return _CLASS_COLORS[class_id % len(_CLASS_COLORS)]
-
-
+# Inference wrappers (each returns result + elapsed_ms)
 def _run_depth(bgr_frame: np.ndarray) -> tuple[np.ndarray, float]:
     if _dav2_model is None:
         raise RuntimeError("DAV2 model is not loaded")
     t0 = time.perf_counter()
     depth = _dav2_model.infer(bgr_frame, input_size=DAV2_INPUT_SIZE)
     return depth, (time.perf_counter() - t0) * 1000.0
-
-
-def _run_sam(bgr_frame: np.ndarray) -> tuple[np.ndarray, float]:
-    if _sam_segmenter is None:
-        raise RuntimeError("SAM model is not loaded")
-    t0 = time.perf_counter()
-    # read-only: get_ground_mask does its own RGB copy, so sharing is safe.
-    mask = _sam_segmenter.get_ground_mask(bgr_frame)
-    return mask, (time.perf_counter() - t0) * 1000.0
 
 
 def _run_yolo(bgr_frame: np.ndarray) -> tuple[list[dict], float]:
@@ -524,26 +367,19 @@ def _run_yolo(bgr_frame: np.ndarray) -> tuple[list[dict], float]:
     for box in results[0].boxes:
         class_id = int(box.cls[0])
         if class_id not in DETECTED_OBSTACLES_IDS:
-            continue  # campus feedback #1: ignore non-obstacle classes
+            continue
         x1, y1, x2, y2 = box.xyxy[0].tolist()
         detections.append({
             "label":      names[class_id],
             "class_id":   class_id,
             "confidence": round(float(box.conf[0]), 3),
-            "color":      _class_color(class_id),
-            # navigation.py expects pixel coords on the rotated frame
             "bbox": [x1, y1, x2, y2],
         })
     return detections, elapsed_ms
 
 
 def _run_stairs(bgr_frame: np.ndarray) -> tuple[list[dict], float]:
-    """Run the stairs detector and keep ONLY its STAIRS_CLASS detections.
-
-    The other classes this model emits (car/bench/human) are weaker duplicates
-    of the base YOLO's COCO output, so we drop them -- leaving a detection set
-    that is disjoint from the base model's and needs no cross-model NMS.
-    """
+    """Run the stairs detector; only keep its 'stairs' class detections."""
     if _stairs_detector is None:
         raise RuntimeError("Stairs model is not loaded")
     t0 = time.perf_counter()
@@ -569,9 +405,7 @@ def _run_stairs(bgr_frame: np.ndarray) -> tuple[list[dict], float]:
     return detections, elapsed_ms
 
 
-# --------------------------------------------------------------------------- #
 # REST endpoints
-# --------------------------------------------------------------------------- #
 @app.get("/health")
 async def health() -> dict:
     return {
@@ -591,37 +425,29 @@ async def health() -> dict:
                 "max_depth_m": DAV2_MAX_DEPTH_M,
                 "fp16": DEVICE == "cuda",
             },
-            "sam": {
-                "loaded": _sam_segmenter is not None,
-                "variant": SAM_VARIANT,
-                "role": "ground_segmentation",
-            },
             "stairs": {
                 "loaded": _stairs_detector is not None,
                 "weights": STAIRS_WEIGHTS,
                 "class": STAIRS_CLASS,
                 "conf_threshold": STAIRS_CONF,
-                "every_n_frames": STAIRS_EVERY_N,
             },
         },
-        "endpoints": ["/health", "/ws/navigation"],
+        "endpoints": ["/health", "/ws/avoidance", "/ws/raw_depth"],
     }
 
 
-# --------------------------------------------------------------------------- #
 # WebSocket endpoint
-# --------------------------------------------------------------------------- #
 def _rolling_avg(samples: deque, key: str) -> float:
     if not samples:
         return 0.0
     return float(sum(s[key] for s in samples) / len(samples))
 
 
-@app.websocket("/ws/navigation")
+@app.websocket("/ws/avoidance")
 async def navigation_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     addr = f"{websocket.client.host}:{websocket.client.port}"
-    log.info("Client connected: %s [/ws/navigation]", addr)
+    log.info("Client connected: %s [/ws/avoidance]", addr)
 
     if _yolo_detector is None or _dav2_model is None:
         log.warning("Refusing connection from %s: models not loaded", addr)
@@ -631,10 +457,6 @@ async def navigation_ws(websocket: WebSocket) -> None:
         await websocket.close(code=1011)
         return
 
-    if _sam_segmenter is None:
-        log.warning("SAM not loaded for %s: ground pixels will NOT be filtered", addr)
-
-    tracker_state = init_tracker_state()
     loop = asyncio.get_running_loop()
 
     timings: deque[dict] = deque(maxlen=ROLLING_WINDOW)
@@ -643,23 +465,14 @@ async def navigation_ws(websocket: WebSocket) -> None:
     frames_skipped = 0
     connection_t0 = time.perf_counter()
 
-    # Stairs run every STAIRS_EVERY_N frames; the last result is cached and
-    # merged into detections on the in-between frames (stairs barely move).
-    stairs_tick = 0
-    stairs_cache: list[dict] = []
-
-    # Frame-similarity skip (#5): fingerprint of the last PROCESSED frame, the
-    # last full JSON response (reused on skipped frames), and a consecutive-skip
-    # counter that forces a refresh after FRAME_SKIP_MAX_CONSEC skips.
+    # frame-skip state: reuse last result if the frame barely changed
     last_sig: np.ndarray | None = None
     last_response: dict | None = None
     consec_skips = 0
 
     try:
         while True:
-            t_total = -1 # time.perf_counter()
-
-            # ---- 1) receive + decode --------------------------------------
+            # 1) receive + decode 
             try:
                 message = await websocket.receive()
                 payload = _decode_frame_message(message)
@@ -690,9 +503,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
             include_depth = payload["include_depth"]
             frame_h, frame_w = frame.shape[:2]
 
-            # ---- 1b) frame-similarity skip (#5) --------------------------
-            # If this frame is near-identical to the last one we actually
-            # processed, reuse that result instead of re-running the models.
+            # 1b) frame-skip: reuse last result if frame barely changed
             sig = _frame_signature(frame)
             sig_mad = -1
             if last_sig is not None:
@@ -709,38 +520,26 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 skip_resp.update({
                     "frame_id": frame_id, "skipped": True,
                     "sig_mad": round(sig_mad, 4),
-                    "depth_attached": False, "seg_attached": False,
-                    "yolo_attached": False, "mask_attached": False,
+                    "depth_attached": False,
+                    "yolo_attached": False,
                 })
                 await websocket.send_text(json.dumps(skip_resp))
                 continue
             consec_skips = 0
             last_sig = sig
 
-            # ---- 2) run YOLO + DAV2 (+ SAM) in parallel ------------------
+            # 2) run YOLO + depth + stairs in parallel
             try:
-                # one .copy() per model guards against ultralytics' in-place
-                # ops; DAV2 and SAM only read the buffer so they can share it.
                 depth_future = loop.run_in_executor(_executor, _run_depth, frame)
                 yolo_future = loop.run_in_executor(_executor, _run_yolo, frame.copy())
-                sam_future = (loop.run_in_executor(_executor, _run_sam, frame)
-                              if _sam_segmenter is not None else None)
-                # only fire the stairs detector every Nth frame (cache otherwise)
-                run_stairs = (_stairs_detector is not None
-                              and stairs_tick % STAIRS_EVERY_N == 0)
                 stairs_future = (loop.run_in_executor(_executor, _run_stairs, frame.copy())
-                                 if run_stairs else None)
+                                 if _stairs_detector is not None else None)
 
                 depth_map, depth_ms = await depth_future
                 detections, yolo_ms = await yolo_future
-                if sam_future is not None:
-                    ground_mask, sam_ms = await sam_future
-                else:
-                    ground_mask, sam_ms = None, 0.0
-                if stairs_future is not None:
-                    stairs_cache, stairs_ms = await stairs_future  # refresh cache
-                else:
-                    stairs_ms = 0.0                                # reuse cache
+                stairs_dets, stairs_ms = (
+                    await stairs_future if stairs_future is not None else ([], 0.0)
+                )
             except Exception:
                 frames_failed += 1
                 log.exception("Inference failure from %s frame %d", addr, frame_id)
@@ -748,22 +547,11 @@ async def navigation_ws(websocket: WebSocket) -> None:
                     "frame_id": frame_id, "error": "Inference failure",
                 }))
                 continue
-            stairs_tick += 1
 
-            # merge base-YOLO obstacles with the (possibly cached) stairs
-            # detections -- the two class sets are disjoint, so no NMS needed.
-            detections = detections + stairs_cache
+            # merge base YOLO + stairs detections (disjoint classes, no NMS needed)
+            detections = detections + stairs_dets
 
-            # ---- 3) remove ground pixels from the depth map --------------
-            # Floor pixels are zeroed so navigation never treats the close
-            # floor as an obstacle (free-zone analysis ignores depth == 0).
-            if ground_mask is not None:
-                filter_ground_depth(depth_map, ground_mask)
-                if SAM_DEBUG and frames_processed % SAM_DEBUG_EVERY == 0:
-                    save_debug(os.path.join(PROJECT_ROOT, "debug"),
-                               frame, ground_mask, depth_map)
-
-            # ---- 4) navigation pipeline ----------------------------------
+            # 3) navigation pipeline 
             t_nav = time.perf_counter()
             try:
                 result = run_detection_pipeline(
@@ -771,7 +559,6 @@ async def navigation_ws(websocket: WebSocket) -> None:
                     depth_map=depth_map,
                     frame_w=frame_w,
                     frame_h=frame_h,
-                    tracker_state=tracker_state,
                 )
             except Exception:
                 frames_failed += 1
@@ -782,7 +569,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 continue
             nav_ms = (time.perf_counter() - t_nav) * 1000.0
 
-            # ---- 4) normalise obstacle bboxes for the client -------------
+            # 4) normalise bboxes to 0-1 range for the client
             for ob in result["obstacles"]:
                 x1, y1, x2, y2 = ob["bbox"]
                 ob["bbox_px"] = [int(x1), int(y1), int(x2), int(y2)]
@@ -790,32 +577,27 @@ async def navigation_ws(websocket: WebSocket) -> None:
                     round(x1 / frame_w, 4), round(y1 / frame_h, 4),
                     round(x2 / frame_w, 4), round(y2 / frame_h, 4),
                 ]
-            # NOTE: highest_priority is the SAME dict object as one of the
-            # obstacles above (navigation sets it to obstacles[0]), so it has
-            # already been normalised in place -- re-normalising it here would
-            # double-divide and collapse bbox_px to ~[0,0,1,0].
+            # highest_priority is the same dict object as obstacles[0],
+            # so it's already been normalised above — don't re-normalise.
 
-            # ---- 5) encode previews (if requested) -----------------------
+            # 5) encode previews (if requested) 
             t_encode = time.perf_counter()
             if include_depth:
                 hq = payload["hq"]
                 depth_jpeg = _encode_depth_preview(depth_map, hq)
-                seg_jpeg = _encode_seg_preview(frame, ground_mask, hq)
                 yolo_jpeg = _encode_yolo_preview(frame, result["obstacles"], hq)
-                mask_png = _encode_mask_preview(ground_mask)
                 freezone_jpeg = _encode_freezones_preview(frame, result["free_zones"], hq)
             else:
-                depth_jpeg = seg_jpeg = yolo_jpeg = mask_png = freezone_jpeg = None
+                depth_jpeg = yolo_jpeg = freezone_jpeg = None
             encode_ms = (time.perf_counter() - t_encode) * 1000.0
 
             total_ms = (time.perf_counter() - t_total) * 1000.0
 
-            # ---- 6) accumulate stats -------------------------------------
+            # 6) stats 
             timings.append({
                 "decode_ms": decode_ms,
                 "yolo_ms": yolo_ms,
                 "depth_ms": depth_ms,
-                "sam_ms": sam_ms,
                 "stairs_ms": stairs_ms,
                 "nav_ms": nav_ms,
                 "encode_ms": encode_ms,
@@ -823,7 +605,7 @@ async def navigation_ws(websocket: WebSocket) -> None:
             })
             frames_processed += 1
 
-            # ---- 7) build the rich JSON response -------------------------
+            # 7) send JSON response
             response = {
                 "frame_id": frame_id,
                 "instruction": result["instruction"],
@@ -835,7 +617,6 @@ async def navigation_ws(websocket: WebSocket) -> None:
                     "decode_ms": round(decode_ms, 2),
                     "yolo_ms": round(yolo_ms, 2),
                     "depth_ms": round(depth_ms, 2),
-                    "sam_ms": round(sam_ms, 2),
                     "stairs_ms": round(stairs_ms, 2),
                     "nav_ms": round(nav_ms, 2),
                     "encode_ms": round(encode_ms, 2),
@@ -849,7 +630,6 @@ async def navigation_ws(websocket: WebSocket) -> None:
                         "decode_ms": round(_rolling_avg(timings, "decode_ms"), 2),
                         "yolo_ms":   round(_rolling_avg(timings, "yolo_ms"), 2),
                         "depth_ms":  round(_rolling_avg(timings, "depth_ms"), 2),
-                        "sam_ms":    round(_rolling_avg(timings, "sam_ms"), 2),
                         "stairs_ms": round(_rolling_avg(timings, "stairs_ms"), 2),
                         "nav_ms":    round(_rolling_avg(timings, "nav_ms"), 2),
                         "encode_ms": round(_rolling_avg(timings, "encode_ms"), 2),
@@ -865,40 +645,34 @@ async def navigation_ws(websocket: WebSocket) -> None:
                 "input_size": {"yolo": YOLO_INPUT_SIZE, "dav2": DAV2_INPUT_SIZE},
                 "skipped": False,
                 "depth_attached": depth_jpeg is not None,
-                "seg_attached": seg_jpeg is not None,
                 "yolo_attached": yolo_jpeg is not None,
-                "mask_attached": mask_png is not None,
                 "freezone_attached": freezone_jpeg is not None,
             }
-            # cache for the frame-similarity skip path (#5)
+            # cache for frame-skip reuse
             last_response = response
 
             await websocket.send_text(json.dumps(response))
 
-            # each preview ships as a separate binary message; the flags byte
-            # in the header tells the client which preview it is.
+            # send preview images as binary messages
             for jpeg, flag in (
                 (depth_jpeg, DEPTH_FLAG),
-                (seg_jpeg, SEG_FLAG),
                 (yolo_jpeg, YOLO_FLAG),
-                (mask_png, MASK_FLAG),
                 (freezone_jpeg, FREEZONE_FLAG),
             ):
                 if jpeg is not None:
                     header = frame_id.to_bytes(4, "big") + bytes([flag])
                     await websocket.send_bytes(header + jpeg)
 
-            # ---- 8) periodic file log ------------------------------------
+            # 8) periodic log
             if frames_processed % LOG_EVERY_N_FRAMES == 0:
                 log.info(
                     "[%s] frames=%d failed=%d skipped=%d fps=%.1f "
-                    "decode=%.1fms yolo=%.1fms depth=%.1fms sam=%.1fms stairs=%.1fms nav=%.1fms total=%.1fms",
+                    "decode=%.1fms yolo=%.1fms depth=%.1fms stairs=%.1fms nav=%.1fms total=%.1fms",
                     addr, frames_processed, frames_failed, frames_skipped,
                     1000.0 / _rolling_avg(timings, "total_ms"),
                     _rolling_avg(timings, "decode_ms"),
                     _rolling_avg(timings, "yolo_ms"),
                     _rolling_avg(timings, "depth_ms"),
-                    _rolling_avg(timings, "sam_ms"),
                     _rolling_avg(timings, "stairs_ms"),
                     _rolling_avg(timings, "nav_ms"),
                     _rolling_avg(timings, "total_ms"),
@@ -916,9 +690,106 @@ async def navigation_ws(websocket: WebSocket) -> None:
             pass
 
 
-# --------------------------------------------------------------------------- #
-# Utility used by main.py (kept here so server.py owns its own surface)
-# --------------------------------------------------------------------------- #
+# Raw-depth endpoint (for calibration data collection)
+@app.websocket("/ws/raw_depth")
+async def raw_depth_ws(websocket: WebSocket) -> None:
+    """Returns uncalibrated per-obstacle depth for building calibration tables.
+    Same wire format as /ws/avoidance. Runs YOLO + stairs + depth, returns
+    the median raw depth of each detection's centre patch."""
+    await websocket.accept()
+    addr = f"{websocket.client.host}:{websocket.client.port}"
+    log.info("Client connected: %s [/ws/raw_depth]", addr)
+
+    if _yolo_detector is None or _dav2_model is None:
+        await websocket.send_text(json.dumps({
+            "error": "Models not loaded on the server (see /health)",
+        }))
+        await websocket.close(code=1011)
+        return
+
+    loop = asyncio.get_running_loop()
+    try:
+        while True:
+            # receive + decode
+            try:
+                message = await websocket.receive()
+                payload = _decode_frame_message(message)
+            except WebSocketDisconnect:
+                raise
+            except Exception as exc:
+                await websocket.send_text(json.dumps({"error": f"Bad frame: {exc}"}))
+                continue
+
+            try:
+                frame = _decode_bgr_frame(payload["frame_bytes"])
+            except Exception as exc:
+                await websocket.send_text(json.dumps({
+                    "frame_id": payload.get("frame_id", 0),
+                    "error": f"Decode failure: {exc}",
+                }))
+                continue
+
+            frame_id = payload["frame_id"]
+            frame_h, frame_w = frame.shape[:2]
+
+            # run models 
+            try:
+                depth_future = loop.run_in_executor(_executor, _run_depth, frame)
+                yolo_future = loop.run_in_executor(_executor, _run_yolo, frame.copy())
+                stairs_future = (loop.run_in_executor(_executor, _run_stairs, frame.copy())
+                                 if _stairs_detector is not None else None)
+                depth_map, depth_ms = await depth_future
+                detections, yolo_ms = await yolo_future
+                stairs_dets, stairs_ms = (
+                    await stairs_future if stairs_future is not None else ([], 0.0)
+                )
+            except Exception:
+                log.exception("Inference failure (raw_depth) from %s frame %d",
+                              addr, frame_id)
+                await websocket.send_text(json.dumps({
+                    "frame_id": frame_id, "error": "Inference failure",
+                }))
+                continue
+
+            # raw depth per detection
+            out: list[dict] = []
+            for d in detections + stairs_dets:
+                bbox = d["bbox"]
+                raw = obstacle_patch_depth(depth_map, bbox, frame_w, frame_h, d["label"])
+                cx = (float(bbox[0]) + float(bbox[2])) / 2.0
+                region = ("LEFT" if cx < frame_w * 0.34
+                          else "RIGHT" if cx > frame_w * 0.66 else "CENTRE")
+                out.append({
+                    "label": d["label"],
+                    "confidence": d["confidence"],
+                    "bbox": [int(round(float(v))) for v in bbox],
+                    "region": region,
+                    "raw_depth_m": round(raw, 3) if raw is not None else None,
+                })
+
+            await websocket.send_text(json.dumps({
+                "frame_id": frame_id,
+                "frame_size": {"w": frame_w, "h": frame_h},
+                "detections": out,
+                "metrics": {
+                    "yolo_ms": round(yolo_ms, 2),
+                    "depth_ms": round(depth_ms, 2),
+                    "stairs_ms": round(stairs_ms, 2),
+                },
+                "device": DEVICE,
+                "calibrated": False,
+            }))
+
+    except WebSocketDisconnect:
+        log.info("Client disconnected: %s [/ws/raw_depth]", addr)
+    except Exception:
+        log.error("Unhandled error (raw_depth) from %s\n%s", addr, traceback.format_exc())
+        try:
+            await websocket.send_text(json.dumps({"error": "Server error"}))
+        except Exception:
+            pass
+
+
 def get_lan_ip() -> str:
     """Best-effort LAN IP discovery (works without internet)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

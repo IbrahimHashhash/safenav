@@ -201,22 +201,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 👤 Author
+## 👤 Developers
 
 **Ibrahim**
-
-- GitHub: [@yourusername](https://github.com/yourusername)
-- LinkedIn: [Your LinkedIn](https://linkedin.com/in/yourprofile)
-
-## 🙏 Acknowledgments
-
-- [Depth-Anything-V2](https://github.com/DepthAnything/Depth-Anything-V2) for depth estimation
-- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) for object detection
-- Flutter team for the amazing framework
-
-## 📸 Screenshots
-
-*Coming soon*
+**Mays**
+**Raheeq**
 
 ## 🔮 Future Roadmap
 
@@ -229,4 +218,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-<p align="center">Made with ❤️ for accessible navigation</p>
+
